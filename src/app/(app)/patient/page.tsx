@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, Calendar, ChevronRight, FileText, FolderHeart, IdCard, MapPin, Phone, Siren, Stethoscope, UserRound } from "lucide-react";
+import { ArrowRight, Calendar, CalendarClock, ChevronRight, FileText, HeartPulse, IdCard, MapPin, Phone, Plus, Siren, Stethoscope, UserRound } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { ButtonLink } from "@/components/ui/button";
@@ -10,13 +10,25 @@ import { getOwnPatientProfile, profileCompletion } from "@/features/patient/quer
 import { SEX_LABELS } from "@/features/patient/schemas";
 import { jurisdictionName } from "@/lib/jurisdictions";
 import { formatDate, greeting } from "@/lib/utils";
-import { requireRole } from "@/server/auth/dal";
+import { requirePatient } from "@/server/patient/context";
+import { countRecords } from "@/server/medical/records";
+import { db } from "@/server/db";
 
 export const metadata: Metadata = { title: "Inicio" };
 
 export default async function PatientDashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const user = await requireRole("PATIENT");
-  const [profile, { welcome }] = await Promise.all([getOwnPatientProfile(user.id), searchParams]);
+  const { user, patientId } = await requirePatient();
+  const [profile, { welcome }, counts, health] = await Promise.all([
+    getOwnPatientProfile(user.id),
+    searchParams,
+    countRecords(patientId),
+    db.patientProfile.findUnique({
+      where: { id: patientId },
+      select: { _count: { select: { allergies: true, conditions: true, medications: true, emergencyContacts: true } }, healthProfile: { select: { bloodType: true } } },
+    }),
+  ]);
+  const healthItems = health ? Object.values(health._count).reduce((a, b) => a + b, 0) + (health.healthProfile?.bloodType ? 1 : 0) : 0;
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const completion = profileCompletion(profile);
 
   const rows = [
@@ -33,7 +45,13 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
 
   return (
     <>
-      <PageHeader eyebrow={new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Argentina/Buenos_Aires" }).format(new Date())} title={`${greeting()}, ${user.firstName}`} description="Este es tu espacio personal de salud." />
+      <PageHeader
+        action={
+          <ButtonLink href="/patient/documents/new">
+            <Plus className="size-4" /> Subir estudio
+          </ButtonLink>
+        }
+        eyebrow={new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Argentina/Buenos_Aires" }).format(new Date())} title={`${greeting()}, ${user.firstName}`} description="Este es tu espacio personal de salud." />
 
       {welcome === "1" ? (
         <Alert tone="success" className="mb-6">
@@ -94,14 +112,15 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
             <h2 id="features-title" className="text-[17px] font-semibold tracking-tight text-ink">
               Tu salud
             </h2>
-            <p className="mt-0.5 text-sm text-muted">Estas secciones estarán disponibles muy pronto.</p>
+            <p className="mt-0.5 text-sm text-muted">Accesos rápidos a tu información médica.</p>
           </div>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <FeatureCard icon={FolderHeart} tone="rose" title="Mi historial" description="Antecedentes, diagnósticos, alergias y medicación en un solo lugar." />
-          <FeatureCard icon={FileText} tone="sky" title="Mis estudios" description="Subí y organizá tus análisis, imágenes e informes médicos." />
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          <FeatureCard icon={HeartPulse} tone="rose" href="/patient/health" title="Mi salud" description="Alergias, condiciones, medicación, cirugías, vacunas y más." stat={plural(healthItems, "dato cargado", "datos cargados")} />
+          <FeatureCard icon={FileText} tone="sky" href="/patient/documents" title="Mis estudios" description="Tus análisis, imágenes e informes médicos, siempre a mano." stat={plural(counts.files, "archivo", "archivos")} />
+          <FeatureCard icon={CalendarClock} tone="brand" href="/patient/history" title="Mi historial" description="Toda tu historia médica en orden cronológico." stat={plural(counts.records, "registro", "registros")} />
+          <FeatureCard icon={Siren} tone="red" href="/patient/emergency" title="Información de emergencia" description="Elegí los datos vitales a tener a mano ante una urgencia." />
           <FeatureCard icon={Stethoscope} tone="violet" title="Mis médicos" description="Elegí qué profesionales pueden ver tu información y por cuánto tiempo." />
-          <FeatureCard icon={Siren} tone="red" title="Información de emergencia" description="Datos vitales accesibles rápidamente ante una urgencia." />
         </div>
       </section>
     </>

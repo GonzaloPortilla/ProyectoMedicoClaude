@@ -43,3 +43,6 @@ next-env.d.ts
 
 # prisma generated client
 /src/generated/
+
+# documentos médicos subidos en desarrollo (nunca al repositorio)
+/storage/

@@ -1,9 +1,12 @@
-# Vitalia — Información médica personal (Fase 1)
+# Vitalia — Información médica personal
 
 Base de una aplicación web para que pacientes guarden su información médica y la compartan sólo con médicos que ellos autoricen.
 
-**Esta fase incluye:** proyecto, base de datos, autenticación, usuarios, roles (paciente / médico / administrador), perfiles básicos, dashboards por rol y verificación manual de médicos.
-**No incluye todavía:** historial clínico, estudios, permisos paciente↔médico ni registro de accesos.
+| Fase | Estado | Contenido |
+| --- | --- | --- |
+| 1 | ✅ | Autenticación, usuarios, roles (paciente / médico / administrador), perfiles, dashboards, verificación manual de médicos |
+| 2 | ✅ | Experiencia del paciente: Mi salud, estudios con archivos privados, historial cronológico, buscador, información de emergencia |
+| 3 | Pendiente | Médicos accediendo con autorización del paciente, solicitudes de acceso, registro de accesos |
 
 ## Stack
 
@@ -16,6 +19,7 @@ Base de una aplicación web para que pacientes guarden su información médica y
 | ORM | Prisma 7 (driver adapter `@prisma/adapter-pg`) |
 | Validación | Zod 4 (mismos esquemas en cliente y servidor) |
 | Hash de contraseñas | Argon2id (`@node-rs/argon2`, parámetros OWASP) |
+| Archivos | Storage privado intercambiable: disco local (desarrollo) o S3 compatible (`@aws-sdk/client-s3`) |
 | Tests | Vitest (unitarios + integración contra PostgreSQL) |
 
 **¿Por qué Prisma?** Las migraciones y el modelo declarativo hacen que el esquema sea fácil de leer y revisar, y el cliente tipado reduce errores en la capa de datos. Para un dominio que va a crecer con muchas relaciones (permisos, documentos, auditoría) es la opción más mantenible.
@@ -67,12 +71,22 @@ Todas usan la contraseña definida en `SEED_DEMO_PASSWORD` (en `.env`). Datos 10
 
 | Rol | Nombre | Email |
 | --- | --- | --- |
-| Paciente | Martín Demo | `martin@demo.local` |
+| Paciente | Martín Demo (con datos de salud y estudios de demo) | `martin@demo.local` |
+| Paciente | Carla Demo (para probar aislamiento) | `carla@demo.local` |
 | Médico (verificado) | Dr. Juan Pérez | `juan.perez@demo.local` |
 | Médica (pendiente) | Dra. Laura Gómez | `laura.gomez@demo.local` |
 | Administrador | Admin Demo | `admin@demo.local` |
 
 Los administradores no se pueden registrar desde la web: se crean por seed o directamente en la base.
+
+### Documentos médicos (almacenamiento)
+
+Los archivos **nunca** quedan accesibles por una URL pública. Se guardan con una clave aleatoria (sin nombre de archivo ni datos del paciente) y se sirven sólo a través de `GET /api/files/[fileId]`, que en cada request valida **sesión → rol → propiedad** antes de leer el storage.
+
+- **Desarrollo** (`STORAGE_DRIVER=local`): se guardan en `./storage/private/` (fuera de `public/`, ignorado por git, permisos `0600`).
+- **Producción** (`STORAGE_DRIVER=s3`): cualquier object storage compatible con S3 (AWS S3, Cloudflare R2, MinIO). El bucket debe ser **privado** (Block Public Access activado). Los objetos se suben con cifrado del lado del servidor (SSE-AES256) y sin ACL. Variables: `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT` (si no es AWS), `S3_FORCE_PATH_STYLE`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`.
+
+Formatos aceptados: PDF, JPG/JPEG y PNG, hasta 15 MB. El tipo se valida por los **bytes del archivo** (firma), no por la extensión ni por el MIME que manda el navegador.
 
 ### Recuperación de contraseña
 
@@ -104,10 +118,11 @@ src/
   proxy.ts               Redirección optimista si no hay cookie (no es la barrera de seguridad)
   app/
     page.tsx             Landing
+    api/files/[fileId]/  Entrega de archivos médicos (valida sesión + propiedad)
     (auth)/              login, register, register/doctor, forgot-password, reset-password
     (app)/               Área autenticada (layout con sidebar)
       dashboard/         Redirige al panel del rol principal
-      patient/           Panel y perfil del paciente
+      patient/           Inicio, Mi salud, Estudios, Historial, Emergencia, Buscar, Mi perfil
       doctor/            Panel profesional
       admin/             Resumen, usuarios y verificación de médicos
   features/<dominio>/    schemas.ts (Zod), actions.ts (server actions), queries.ts, components/
@@ -115,11 +130,15 @@ src/
     auth/                password, tokens, sesiones, cookies, DAL de autorización, servicio, rate limit
     db.ts, env.ts        Cliente Prisma y variables de entorno validadas
     mail/                Abstracción de email
+    patient/context.ts   Resuelve el patientId SIEMPRE desde la sesión
+    medical/             Servicios: registros, Mi salud, historial, búsqueda, instituciones
+    storage/             Drivers de almacenamiento privado (local / S3)
+    files/               Validación de archivos y control de acceso
   components/            UI compartida (botones, campos, cards, shell)
   lib/                   Utilidades puras (jurisdicciones, formato, formularios)
 tests/
   unit/                  Hashing, roles, rate limit, validaciones
-  integration/           Registro, login, sesiones y recuperación contra PostgreSQL
+  integration/           Auth, registros médicos, historial, búsqueda y AISLAMIENTO entre pacientes
 ```
 
 Flujo de una petición: **página / server action → DAL (`requireRole` / `authorizeRole`) → validación Zod → servicio / query con `select` explícito → Prisma**.
@@ -136,6 +155,20 @@ Flujo de una petición: **página / server action → DAL (`requireRole` / `auth
 
 Los perfiles están separados por rol a propósito: los permisos futuros (paciente autoriza a médico, auditoría de accesos) se podrán aplicar por tipo de dato.
 
+### Información médica (Fase 2)
+
+Todo cuelga de `PatientProfile` (`patientId`), y cada dato clínico guarda su **origen** (`source`: `PATIENT` | `DOCTOR` | `SYSTEM`) y su **autor** (`createdById`). En esta fase casi todo lo carga el paciente; en la próxima, un médico autorizado podrá crear registros con `source = DOCTOR` sin cambiar el modelo.
+
+- **MedicalCategory**: catálogo extensible (slug, nombre, orden, activo). Las 20 categorías iniciales se insertan en la propia migración.
+- **MedicalRecord**: un hecho médico fechado (estudio, consulta, informe, receta…) con categoría, especialidad, institución, profesional, descripción y tags. Es la unidad del historial y de la búsqueda (`searchText` normalizado, sin acentos).
+- **MedicalFile**: metadatos del archivo (clave en el storage, nombre original, MIME detectado, tamaño, SHA-256). 0..n por registro.
+- **Institution**: instituciones normalizadas **por paciente** (no se comparten entre pacientes para no filtrar dónde se atiende alguien).
+- **HealthProfile**: grupo sanguíneo, altura y peso.
+- **Allergy, Condition, Medication, Surgery, Hospitalization, Vaccination, FamilyHistory, EmergencyContact**: una tabla por tipo de dato.
+- **EmergencyProfile**: qué secciones muestra la ficha de emergencia (todavía sin acceso público ni QR).
+
+El **historial** se arma al vuelo combinando `MedicalRecord` con los datos fechados de Mi salud (cirugías, internaciones, vacunas), sin duplicar información.
+
 ## Seguridad
 
 - **Autorización en el servidor:** cada layout, página y server action verifica la sesión contra la base y el rol (`src/server/auth/dal.ts`). El menú sólo muestra u oculta enlaces; no protege nada. El `proxy` sólo evita renderizar si falta la cookie.
@@ -147,11 +180,15 @@ Los perfiles están separados por rol a propósito: los permisos futuros (pacien
 - **CSRF:** Next.js verifica `Origin` contra `Host` en server actions, y la cookie usa `SameSite=Lax`.
 - **Cabeceras:** `X-Frame-Options: DENY`, CSP `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS en producción.
 - **Mínimo privilegio del administrador:** gestiona cuentas y verificaciones, pero no puede entrar al área de pacientes, y sus consultas (`src/features/admin/queries.ts`) usan `select` explícito sin datos de `PatientProfile`. Nadie puede revisar su propia matrícula.
+- **Aislamiento entre pacientes:** el `patientId` se obtiene siempre de la sesión (`src/server/patient/context.ts`), nunca de la URL o del formulario. Toda consulta filtra por él; un id ajeno responde 404, igual que uno inexistente. Cubierto por `tests/integration/patient-isolation.test.ts`.
+- **Archivos:** validación por firma de bytes, nombres saneados, claves aleatorias, `Cache-Control: no-store`, `nosniff` y CSP restrictiva al servirlos. Ni el administrador ni los médicos (todavía) pueden abrirlos.
 - **Secretos:** sólo en `.env` (ignorado por git); `.env.example` no tiene valores reales.
 
 ## Pendiente para próximas fases
 
-- Historial médico, estudios y documentos (con almacenamiento cifrado).
-- Autorizaciones paciente → médico con vencimiento, y registro de cada acceso.
+- Autorizaciones paciente → médico con vencimiento, y registro de cada acceso (el punto de extensión es `src/server/files/access.ts`).
+- Edición de datos ya cargados (hoy se agregan y eliminan).
+- Acceso público a la ficha de emergencia (QR) con controles propios.
+- Escaneo antivirus de archivos subidos.
 - Proveedor real de email y verificación de email.
 - Rate limiting distribuido, 2FA para médicos y administradores.

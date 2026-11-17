@@ -30,3 +30,18 @@ export function greeting(now: Date = new Date()): string {
   if (hour >= 13 && hour < 20) return "Buenas tardes";
   return "Buenas noches";
 }
+
+/** Une partes no vacías con " · ", sin repetir valores (p. ej. categoría = especialidad). */
+export function joinUnique(parts: Array<string | null | undefined | false>, sep = " · "): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of parts) {
+    if (!p) continue;
+    const key = p.toLocaleLowerCase("es");
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push(p);
+    }
+  }
+  return out.join(sep);
+}

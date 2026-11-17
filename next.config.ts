@@ -17,6 +17,11 @@ const nextConfig: NextConfig = {
   poweredByHeader: false,
   // El cliente Prisma y el driver de Postgres se ejecutan sólo en el servidor.
   serverExternalPackages: ["@node-rs/argon2"],
+  experimental: {
+    // Subida de estudios médicos: hasta 15 MB por archivo (+ margen del formulario).
+    serverActions: { bodySizeLimit: "16mb" },
+    proxyClientMaxBodySize: "16mb",
+  },
   turbopack: {
     rules: {
       "*.css": {

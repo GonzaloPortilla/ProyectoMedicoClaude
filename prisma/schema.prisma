@@ -63,6 +63,17 @@ model User {
   doctorProfile       DoctorProfile?
   verificationReviews DoctorVerification[] @relation("VerificationReviewer")
 
+  // Autoría de información médica (Fase 2)
+  createdRecords      MedicalRecord[]   @relation("RecordCreatedBy")
+  uploadedFiles       MedicalFile[]     @relation("FileUploadedBy")
+  createdAllergies    Allergy[]         @relation("AllergyCreatedBy")
+  createdConditions   Condition[]       @relation("ConditionCreatedBy")
+  createdMedications  Medication[]      @relation("MedicationCreatedBy")
+  createdSurgeries    Surgery[]         @relation("SurgeryCreatedBy")
+  createdHospitals    Hospitalization[] @relation("HospitalizationCreatedBy")
+  createdVaccinations Vaccination[]     @relation("VaccinationCreatedBy")
+  createdFamilyItems  FamilyHistory[]   @relation("FamilyHistoryCreatedBy")
+
   @@map("users")
 }
 
@@ -96,6 +107,21 @@ model PatientProfile {
   updatedAt   DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Información médica (Fase 2). Todo cuelga del paciente: la propiedad se verifica por patientId.
+  healthProfile     HealthProfile?
+  emergencyProfile  EmergencyProfile?
+  emergencyContacts EmergencyContact[]
+  allergies         Allergy[]
+  conditions        Condition[]
+  medications       Medication[]
+  surgeries         Surgery[]
+  hospitalizations  Hospitalization[]
+  vaccinations      Vaccination[]
+  familyHistory     FamilyHistory[]
+  institutions      Institution[]
+  records           MedicalRecord[]
+  files             MedicalFile[]
 
   @@map("patient_profiles")
 }
@@ -167,4 +193,318 @@ model PasswordResetToken {
 
   @@index([userId])
   @@map("password_reset_tokens")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FASE 2 — Información médica del paciente
+//
+// - Toda entidad clínica pertenece a un PatientProfile (patientId) y registra su
+//   ORIGEN (source: PATIENT | DOCTOR | SYSTEM) y AUTOR (createdById). En esta fase
+//   el paciente carga casi todo; en la próxima los médicos autorizados podrán crear
+//   registros con source = DOCTOR sin cambiar el modelo.
+// - Los archivos nunca son públicos: MedicalFile guarda sólo metadatos y una
+//   storageKey aleatoria; los bytes se sirven a través de /api/files/[id], que
+//   valida sesión, propiedad y permisos en cada request.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum DataSource {
+  PATIENT
+  DOCTOR
+  SYSTEM
+}
+
+enum BloodType {
+  A_POS
+  A_NEG
+  B_POS
+  B_NEG
+  AB_POS
+  AB_NEG
+  O_POS
+  O_NEG
+}
+
+enum AllergySeverity {
+  MILD
+  MODERATE
+  SEVERE
+  UNKNOWN
+}
+
+enum ConditionStatus {
+  ACTIVE
+  RESOLVED
+}
+
+/// Categorías de registros médicos. Extensibles: se agregan filas sin migrar código.
+model MedicalCategory {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  records MedicalRecord[]
+
+  @@map("medical_categories")
+}
+
+/// Instituciones de salud. En esta fase son propias de cada paciente (texto que él carga),
+/// para no exponer a otros pacientes dónde se atiende alguien. Un catálogo global
+/// verificado puede agregarse más adelante.
+model Institution {
+  id             String   @id @default(cuid())
+  patientId      String
+  name           String
+  /// Nombre normalizado (minúsculas, sin acentos) para deduplicar.
+  normalizedName String
+  createdAt      DateTime @default(now())
+
+  patient          PatientProfile    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  records          MedicalRecord[]
+  surgeries        Surgery[]
+  hospitalizations Hospitalization[]
+
+  @@unique([patientId, normalizedName])
+  @@map("institutions")
+}
+
+/// Datos biométricos básicos (1:1 con el paciente).
+model HealthProfile {
+  id        String     @id @default(cuid())
+  patientId String     @unique
+  bloodType BloodType?
+  heightCm  Int?
+  weightKg  Float?
+  updatedAt DateTime   @updatedAt
+  createdAt DateTime   @default(now())
+
+  patient PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@map("health_profiles")
+}
+
+/// Qué información el paciente elige mostrar en su ficha de emergencia.
+model EmergencyProfile {
+  id                    String   @id @default(cuid())
+  patientId             String   @unique
+  showBloodType         Boolean  @default(true)
+  showAllergies         Boolean  @default(true)
+  showConditions        Boolean  @default(true)
+  showMedications       Boolean  @default(true)
+  showEmergencyContacts Boolean  @default(true)
+  additionalNotes       String?
+  updatedAt             DateTime @updatedAt
+  createdAt             DateTime @default(now())
+
+  patient PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@map("emergency_profiles")
+}
+
+model EmergencyContact {
+  id           String   @id @default(cuid())
+  patientId    String
+  name         String
+  relationship String?
+  phone        String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  patient PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([patientId])
+  @@map("emergency_contacts")
+}
+
+model Allergy {
+  id          String          @id @default(cuid())
+  patientId   String
+  name        String
+  severity    AllergySeverity @default(UNKNOWN)
+  reaction    String?
+  source      DataSource      @default(PATIENT)
+  createdById String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  patient   PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  createdBy User?          @relation("AllergyCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@map("allergies")
+}
+
+model Condition {
+  id          String          @id @default(cuid())
+  patientId   String
+  name        String
+  status      ConditionStatus @default(ACTIVE)
+  diagnosedOn DateTime?       @db.Date
+  notes       String?
+  source      DataSource      @default(PATIENT)
+  createdById String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  patient   PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  createdBy User?          @relation("ConditionCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@map("conditions")
+}
+
+model Medication {
+  id          String     @id @default(cuid())
+  patientId   String
+  name        String
+  dosage      String?
+  frequency   String?
+  startedOn   DateTime?  @db.Date
+  notes       String?
+  source      DataSource @default(PATIENT)
+  createdById String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  patient   PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  createdBy User?          @relation("MedicationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@map("medications")
+}
+
+model Surgery {
+  id            String     @id @default(cuid())
+  patientId     String
+  name          String
+  performedOn   DateTime?  @db.Date
+  institutionId String?
+  notes         String?
+  source        DataSource @default(PATIENT)
+  createdById   String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  patient     PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  institution Institution?   @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  createdBy   User?          @relation("SurgeryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@map("surgeries")
+}
+
+model Hospitalization {
+  id            String     @id @default(cuid())
+  patientId     String
+  reason        String
+  admittedOn    DateTime?  @db.Date
+  dischargedOn  DateTime?  @db.Date
+  institutionId String?
+  notes         String?
+  source        DataSource @default(PATIENT)
+  createdById   String?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  patient     PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  institution Institution?   @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  createdBy   User?          @relation("HospitalizationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@map("hospitalizations")
+}
+
+model Vaccination {
+  id             String     @id @default(cuid())
+  patientId      String
+  name           String
+  dose           String?
+  administeredOn DateTime?  @db.Date
+  notes          String?
+  source         DataSource @default(PATIENT)
+  createdById    String?
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+
+  patient   PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  createdBy User?          @relation("VaccinationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@map("vaccinations")
+}
+
+model FamilyHistory {
+  id           String     @id @default(cuid())
+  patientId    String
+  relationship String
+  condition    String
+  notes        String?
+  source       DataSource @default(PATIENT)
+  createdById  String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  patient   PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  createdBy User?          @relation("FamilyHistoryCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@map("family_history")
+}
+
+/// Un hecho médico fechado: estudio, consulta, informe, receta… Puede tener 0..n archivos.
+/// Es la unidad del historial cronológico y de la búsqueda.
+model MedicalRecord {
+  id               String     @id @default(cuid())
+  patientId        String
+  title            String
+  occurredOn       DateTime   @db.Date
+  categoryId       String
+  specialty        String?
+  institutionId    String?
+  professionalName String?
+  description      String?
+  /// Normalizados a minúsculas.
+  tags             String[]   @default([])
+  /// Texto normalizado (minúsculas, sin acentos) con todos los campos buscables.
+  searchText       String     @default("")
+  source           DataSource @default(PATIENT)
+  createdById      String?
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  patient     PatientProfile  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  category    MedicalCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  institution Institution?    @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  createdBy   User?           @relation("RecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  files       MedicalFile[]
+
+  @@index([patientId, occurredOn])
+  @@index([patientId, categoryId])
+  @@map("medical_records")
+}
+
+/// Metadatos de un archivo privado. Los bytes viven en el storage (local o S3) bajo storageKey.
+model MedicalFile {
+  id           String   @id @default(cuid())
+  /// Denormalizado desde el registro para validar propiedad sin joins.
+  patientId    String
+  recordId     String
+  /// Clave aleatoria en el storage. Nunca contiene datos del paciente ni el nombre original.
+  storageKey   String   @unique
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  sha256       String
+  uploadedById String?
+  createdAt    DateTime @default(now())
+
+  patient    PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  record     MedicalRecord  @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  uploadedBy User?          @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@index([recordId])
+  @@map("medical_files")
 }

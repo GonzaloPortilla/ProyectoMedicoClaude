@@ -1,4 +1,5 @@
-import type { LucideIcon } from "lucide-react";
+import Link from "next/link";
+import { ArrowUpRight, type LucideIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
@@ -10,18 +11,43 @@ const tones = {
   brand: "from-brand-50 to-white text-brand-600 ring-brand-100",
 } as const;
 
-/** Tarjeta para funciones futuras (todavía no implementadas). */
-export function FeatureCard({ icon: Icon, title, description, tone }: { icon: LucideIcon; title: string; description: string; tone: keyof typeof tones }) {
-  return (
-    <div aria-disabled className="group relative flex flex-col rounded-[var(--radius-card)] border border-line bg-surface p-5 shadow-card">
+/** Acceso a una sección. Sin `href` se muestra como "Próximamente". */
+export function FeatureCard({
+  icon: Icon,
+  title,
+  description,
+  tone,
+  href,
+  stat,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  tone: keyof typeof tones;
+  href?: string;
+  stat?: string;
+}) {
+  const content = (
+    <>
       <div className="flex items-start justify-between">
         <span className={cn("flex size-11 items-center justify-center rounded-2xl bg-gradient-to-b ring-1 ring-inset", tones[tone])}>
           <Icon className="size-5" />
         </span>
-        <Badge>Próximamente</Badge>
+        {href ? <ArrowUpRight className="size-4 text-muted transition-colors group-hover:text-ink" /> : <Badge>Próximamente</Badge>}
       </div>
       <h3 className="mt-5 text-[15px] font-semibold tracking-tight text-ink">{title}</h3>
       <p className="mt-1 text-sm leading-relaxed text-muted">{description}</p>
+      {stat ? <p className="mt-3 text-[13px] font-medium text-ink-soft">{stat}</p> : null}
+    </>
+  );
+  const cls = "group relative flex flex-col rounded-[var(--radius-card)] border border-line bg-surface p-5 shadow-card";
+  return href ? (
+    <Link href={href} className={cn(cls, "transition-shadow hover:shadow-raised")}>
+      {content}
+    </Link>
+  ) : (
+    <div aria-disabled className={cls}>
+      {content}
     </div>
   );
 }
