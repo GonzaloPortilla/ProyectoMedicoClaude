@@ -6,7 +6,7 @@ Base de una aplicación web para que pacientes guarden su información médica y
 | --- | --- | --- |
 | 1 | ✅ | Autenticación, usuarios, roles (paciente / médico / administrador), perfiles, dashboards, verificación manual de médicos |
 | 2 | ✅ | Experiencia del paciente: Mi salud, estudios con archivos privados, historial cronológico, buscador, información de emergencia |
-| 3 | Pendiente | Médicos accediendo con autorización del paciente, solicitudes de acceso, registro de accesos |
+| 3 | ✅ | Médicos con acceso autorizado por el paciente: código de vinculación, solicitudes, permisos granulares con vencimiento, revocación, informes versionados y registro de accesos |
 
 ## Stack
 
@@ -71,8 +71,8 @@ Todas usan la contraseña definida en `SEED_DEMO_PASSWORD` (en `.env`). Datos 10
 
 | Rol | Nombre | Email |
 | --- | --- | --- |
-| Paciente | Martín Demo (con datos de salud y estudios de demo) | `martin@demo.local` |
-| Paciente | Carla Demo (para probar aislamiento) | `carla@demo.local` |
+| Paciente | Martín Demo (datos de salud, estudios y un acceso activo del Dr. Pérez por 30 días) | `martin@demo.local` |
+| Paciente | Carla Demo (tiene una solicitud de acceso pendiente del Dr. Pérez) | `carla@demo.local` |
 | Médico (verificado) | Dr. Juan Pérez | `juan.perez@demo.local` |
 | Médica (pendiente) | Dra. Laura Gómez | `laura.gomez@demo.local` |
 | Administrador | Admin Demo | `admin@demo.local` |
@@ -87,6 +87,17 @@ Los archivos **nunca** quedan accesibles por una URL pública. Se guardan con un
 - **Producción** (`STORAGE_DRIVER=s3`): cualquier object storage compatible con S3 (AWS S3, Cloudflare R2, MinIO). El bucket debe ser **privado** (Block Public Access activado). Los objetos se suben con cifrado del lado del servidor (SSE-AES256) y sin ACL. Variables: `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT` (si no es AWS), `S3_FORCE_PATH_STYLE`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`.
 
 Formatos aceptados: PDF, JPG/JPEG y PNG, hasta 15 MB. El tipo se valida por los **bytes del archivo** (firma), no por la extensión ni por el MIME que manda el navegador.
+
+### Acceso de médicos (Fase 3)
+
+Un médico **nunca** puede entrar libremente al historial de un paciente:
+
+1. El paciente genera un **código de vinculación** en *Mis médicos* (8 caracteres, un solo uso, vence en 60 minutos, guardado sólo como hash).
+2. El médico **verificado** lo ingresa en su panel → se crea una solicitud. No existe un buscador de pacientes, así que nadie puede averiguar quién está registrado.
+3. El paciente ve *Dr/a. Nombre · Especialidad · Matrícula* y **acepta o rechaza**. Al aceptar elige qué compartir (secciones de Mi salud y categorías de estudios), por cuánto tiempo (1 h, 24 h, 7 días, 30 días, permanente o hasta una fecha) y si el médico puede crear informes o adjuntar archivos.
+4. El paciente puede **revocar** el acceso en cualquier momento. La revocación es inmediata.
+
+Para probarlo con los datos demo: entrá como `carla@demo.local` y aceptá la solicitud del Dr. Pérez, o como `martin@demo.local` generá un código y usalo desde `juan.perez@demo.local`.
 
 ### Recuperación de contraseña
 
@@ -134,11 +145,14 @@ src/
     medical/             Servicios: registros, Mi salud, historial, búsqueda, instituciones
     storage/             Drivers de almacenamiento privado (local / S3)
     files/               Validación de archivos y control de acceso
+    access/              Política de acceso médico, códigos, solicitudes/grants, vista del médico, log
+    doctor/context.ts    Exige médico verificado + acceso vigente en las páginas del médico
   components/            UI compartida (botones, campos, cards, shell)
   lib/                   Utilidades puras (jurisdicciones, formato, formularios)
 tests/
   unit/                  Hashing, roles, rate limit, validaciones
-  integration/           Auth, registros médicos, historial, búsqueda y AISLAMIENTO entre pacientes
+  integration/           Auth, registros médicos, historial, búsqueda, AISLAMIENTO entre pacientes
+                         y casos de seguridad del acceso médico (doctor-access.test.ts)
 ```
 
 Flujo de una petición: **página / server action → DAL (`requireRole` / `authorizeRole`) → validación Zod → servicio / query con `select` explícito → Prisma**.
@@ -167,6 +181,19 @@ Todo cuelga de `PatientProfile` (`patientId`), y cada dato clínico guarda su **
 - **Allergy, Condition, Medication, Surgery, Hospitalization, Vaccination, FamilyHistory, EmergencyContact**: una tabla por tipo de dato.
 - **EmergencyProfile**: qué secciones muestra la ficha de emergencia (todavía sin acceso público ni QR).
 
+### Acceso médico (Fase 3)
+
+```
+paciente ──< AccessRequest >── médico          (solicitud: pendiente / aprobada / rechazada / cancelada)
+paciente ──< AccessGrant   >── médico          (estado, inicio, vencimiento o permanente, revocación)
+                 └──< AccessPermission          (tipo de recurso + clave + acción)
+```
+
+- **AccessPermission** = `resourceType` (`HEALTH_SECTION` | `RECORD_CATEGORY`) + `resourceKey` (p. ej. `ALLERGIES`, `cardiologia`) + `action` (`VIEW` | `UPLOAD` | `CREATE_MEDICAL_ENTRY`). Para agregar recursos o acciones nuevas alcanza con extender los enums.
+- **PatientLinkCode**: hash del código, vencimiento y marca de uso.
+- **AccessLog**: cada vista de resumen, registro o archivo y cada informe creado o corregido. El paciente lo ve en *Mis médicos*. La base rechaza modificar el contenido del log.
+- **MedicalReport** + **MedicalReportVersion**: el informe guarda una copia fija de los datos del autor al emitirlo (nombre, matrícula, jurisdicción, especialidad) y se muestra en el historial del paciente a través de su `MedicalRecord`. Las versiones son **append-only**: un trigger de PostgreSQL rechaza `UPDATE` y `DELETE`, y corregir agrega una versión nueva con su motivo. El paciente no puede borrar informes de médicos.
+
 El **historial** se arma al vuelo combinando `MedicalRecord` con los datos fechados de Mi salud (cirugías, internaciones, vacunas), sin duplicar información.
 
 ## Seguridad
@@ -181,12 +208,14 @@ El **historial** se arma al vuelo combinando `MedicalRecord` con los datos fecha
 - **Cabeceras:** `X-Frame-Options: DENY`, CSP `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS en producción.
 - **Mínimo privilegio del administrador:** gestiona cuentas y verificaciones, pero no puede entrar al área de pacientes, y sus consultas (`src/features/admin/queries.ts`) usan `select` explícito sin datos de `PatientProfile`. Nadie puede revisar su propia matrícula.
 - **Aislamiento entre pacientes:** el `patientId` se obtiene siempre de la sesión (`src/server/patient/context.ts`), nunca de la URL o del formulario. Toda consulta filtra por él; un id ajeno responde 404, igual que uno inexistente. Cubierto por `tests/integration/patient-isolation.test.ts`.
+- **Acceso médico:** una única política (`src/server/access/policy.ts`) decide, en **cada request** y contra la base, si existe un grant vigente: estado activo, no revocado, no vencido y médico todavía verificado. No hay caché, así que vencimiento y revocación se aplican al instante. Las consultas del médico sólo piden a la base lo autorizado, y lo no autorizado nunca sale del servidor. Un id ajeno o sin permiso responde 404. Cubierto por `tests/integration/doctor-access.test.ts` (los 6 casos obligatorios y más).
 - **Archivos:** validación por firma de bytes, nombres saneados, claves aleatorias, `Cache-Control: no-store`, `nosniff` y CSP restrictiva al servirlos. Ni el administrador ni los médicos (todavía) pueden abrirlos.
 - **Secretos:** sólo en `.env` (ignorado por git); `.env.example` no tiene valores reales.
 
 ## Pendiente para próximas fases
 
-- Autorizaciones paciente → médico con vencimiento, y registro de cada acceso (el punto de extensión es `src/server/files/access.ts`).
+- Notificaciones (email/push) de solicitudes nuevas y accesos por vencer.
+- Edición de un acceso activo sin revocarlo (hoy se revoca y se otorga uno nuevo).
 - Edición de datos ya cargados (hoy se agregan y eliminan).
 - Acceso público a la ficha de emergencia (QR) con controles propios.
 - Escaneo antivirus de archivos subidos.

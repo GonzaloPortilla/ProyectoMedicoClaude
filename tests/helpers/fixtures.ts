@@ -9,4 +9,4 @@ export function file(name: string, bytes: Uint8Array) {
 }
 
 export const TRUNCATE_ALL =
-  'TRUNCATE "users", "user_roles", "patient_profiles", "doctor_profiles", "doctor_verifications", "sessions", "password_reset_tokens", "medical_records", "medical_files", "institutions" CASCADE';
+  'TRUNCATE "users", "user_roles", "patient_profiles", "doctor_profiles", "doctor_verifications", "sessions", "password_reset_tokens", "medical_records", "medical_files", "institutions", "access_requests", "access_grants", "access_logs", "patient_link_codes", "medical_reports", "medical_report_versions" CASCADE';

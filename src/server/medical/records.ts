@@ -87,10 +87,13 @@ export async function createRecord(patientId: string, actor: Actor, input: Recor
   }
 }
 
-/** Borra el registro y sus archivos. Devuelve false si no existe o no pertenece al paciente. */
+/**
+ * Borra el registro y sus archivos. Devuelve false si no existe, no pertenece al paciente
+ * o no fue cargado por el paciente (los informes de médicos no se pueden borrar).
+ */
 export async function deleteRecord(patientId: string, recordId: string): Promise<boolean> {
   const record = await db.medicalRecord.findFirst({
-    where: { id: recordId, patientId },
+    where: { id: recordId, patientId, source: "PATIENT", report: null },
     select: { id: true, files: { select: { storageKey: true } } },
   });
   if (!record) return false;
@@ -116,6 +119,18 @@ const recordDetailSelect = {
   category: { select: { slug: true, name: true } },
   institution: { select: { id: true, name: true } },
   createdBy: { select: { firstName: true, lastName: true } },
+  report: {
+    select: {
+      id: true,
+      authorName: true,
+      licenseNumber: true,
+      licenseJurisdiction: true,
+      specialty: true,
+      currentVersion: true,
+      createdAt: true,
+      versions: { orderBy: { version: "desc" as const }, select: { version: true, title: true, content: true, changeReason: true, createdAt: true } },
+    },
+  },
   files: { select: { id: true, originalName: true, mimeType: true, sizeBytes: true, createdAt: true }, orderBy: { createdAt: "asc" as const } },
 } as const;
 

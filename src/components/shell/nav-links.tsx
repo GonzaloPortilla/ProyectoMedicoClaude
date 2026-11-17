@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BadgeCheck, CalendarClock, FileText, HeartPulse, House, LayoutDashboard, Search, Siren, Stethoscope, UserRound, Users } from "lucide-react";
+import { BadgeCheck, CalendarClock, FileText, HeartPulse, House, LayoutDashboard, Search, Siren, Stethoscope, UserRound, UserRoundCheck, Users } from "lucide-react";
 import type { NavIcon, NavItem, NavSection } from "@/components/shell/nav-config";
 import { cn } from "@/lib/utils";
 
@@ -18,6 +18,7 @@ const ICONS: Record<NavIcon, typeof House> = {
   history: CalendarClock,
   emergency: Siren,
   search: Search,
+  doctors: UserRoundCheck,
 };
 
 function useIsActive() {

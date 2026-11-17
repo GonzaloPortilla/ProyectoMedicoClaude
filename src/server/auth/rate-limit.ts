@@ -45,4 +45,7 @@ globalLimiters.__limiters ??= {
   passwordReset: new RateLimiter(5, 60 * 60 * 1000),
 };
 
-export const limiters = globalLimiters.__limiters as Record<"login" | "register" | "passwordReset", RateLimiter>;
+// Intentos de código de vinculación por médico: evita adivinar códigos por fuerza bruta.
+globalLimiters.__limiters.linkCode ??= new RateLimiter(10, 15 * 60 * 1000);
+
+export const limiters = globalLimiters.__limiters as Record<"login" | "register" | "passwordReset" | "linkCode", RateLimiter>;

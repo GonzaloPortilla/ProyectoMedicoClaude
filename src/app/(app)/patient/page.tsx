@@ -13,12 +13,13 @@ import { formatDate, greeting } from "@/lib/utils";
 import { requirePatient } from "@/server/patient/context";
 import { countRecords } from "@/server/medical/records";
 import { db } from "@/server/db";
+import { listGrantsForPatient, listPendingRequestsForPatient } from "@/server/access/requests";
 
 export const metadata: Metadata = { title: "Inicio" };
 
 export default async function PatientDashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { user, patientId } = await requirePatient();
-  const [profile, { welcome }, counts, health] = await Promise.all([
+  const [profile, { welcome }, counts, health, grants, pendingRequests] = await Promise.all([
     getOwnPatientProfile(user.id),
     searchParams,
     countRecords(patientId),
@@ -26,6 +27,8 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
       where: { id: patientId },
       select: { _count: { select: { allergies: true, conditions: true, medications: true, emergencyContacts: true } }, healthProfile: { select: { bloodType: true } } },
     }),
+    listGrantsForPatient(patientId),
+    listPendingRequestsForPatient(patientId),
   ]);
   const healthItems = health ? Object.values(health._count).reduce((a, b) => a + b, 0) + (health.healthProfile?.bloodType ? 1 : 0) : 0;
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -52,6 +55,15 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
           </ButtonLink>
         }
         eyebrow={new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric", month: "long", timeZone: "America/Argentina/Buenos_Aires" }).format(new Date())} title={`${greeting()}, ${user.firstName}`} description="Este es tu espacio personal de salud." />
+
+      {pendingRequests.length ? (
+        <Alert tone="info" className="mb-6">
+          Tenés {plural(pendingRequests.length, "solicitud de acceso pendiente", "solicitudes de acceso pendientes")}.{" "}
+          <Link href="/patient/doctors" className="font-medium underline underline-offset-2">
+            Revisar
+          </Link>
+        </Alert>
+      ) : null}
 
       {welcome === "1" ? (
         <Alert tone="success" className="mb-6">
@@ -120,7 +132,14 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
           <FeatureCard icon={FileText} tone="sky" href="/patient/documents" title="Mis estudios" description="Tus análisis, imágenes e informes médicos, siempre a mano." stat={plural(counts.files, "archivo", "archivos")} />
           <FeatureCard icon={CalendarClock} tone="brand" href="/patient/history" title="Mi historial" description="Toda tu historia médica en orden cronológico." stat={plural(counts.records, "registro", "registros")} />
           <FeatureCard icon={Siren} tone="red" href="/patient/emergency" title="Información de emergencia" description="Elegí los datos vitales a tener a mano ante una urgencia." />
-          <FeatureCard icon={Stethoscope} tone="violet" title="Mis médicos" description="Elegí qué profesionales pueden ver tu información y por cuánto tiempo." />
+          <FeatureCard
+            icon={Stethoscope}
+            tone="violet"
+            href="/patient/doctors"
+            title="Mis médicos"
+            description="Elegí qué profesionales pueden ver tu información y por cuánto tiempo."
+            stat={[plural(grants.active.length, "acceso activo", "accesos activos"), pendingRequests.length ? plural(pendingRequests.length, "solicitud pendiente", "solicitudes pendientes") : null].filter(Boolean).join(" · ")}
+          />
         </div>
       </section>
     </>

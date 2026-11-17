@@ -64,7 +64,7 @@ async function main() {
   });
 
   // Médico verificado
-  await db.user.upsert({
+  const juan = await db.user.upsert({
     where: { email: "juan.perez@demo.local" },
     update: {},
     create: {
@@ -128,6 +128,7 @@ async function main() {
 
   await seedMedicalData(martin.id);
   await seedCarla(carla.id);
+  await seedAccessDemo(martin.id, carla.id, juan.id);
 
   console.info("Seed completado. Cuentas demo (contraseña = SEED_DEMO_PASSWORD):");
   console.table([
@@ -299,6 +300,101 @@ async function seedCarla(userId: string) {
     category: "diagnostico-por-imagenes",
     institution: "Clínica Demo Córdoba",
     file: { name: "ecografia-carla.pdf", kind: "pdf" },
+  });
+}
+
+// ─── Acceso médico (Fase 3) ─────────────────────────────────────────────────
+
+async function seedAccessDemo(martinUserId: string, carlaUserId: string, doctorUserId: string) {
+  const martin = await db.patientProfile.findUniqueOrThrow({ where: { userId: martinUserId } });
+  const carla = await db.patientProfile.findUniqueOrThrow({ where: { userId: carlaUserId } });
+  if ((await db.accessRequest.count({ where: { doctorUserId } })) > 0) return; // idempotente
+
+  // Martín autorizó al Dr. Pérez por 30 días: datos generales, alergias, medicación,
+  // antecedentes, Laboratorio y Cardiología (puede crear informes). NO Diagnóstico por imágenes.
+  const request = await db.accessRequest.create({
+    data: {
+      patientId: martin.id,
+      doctorUserId,
+      status: "APPROVED",
+      message: "Control cardiológico anual",
+      expiresAt: new Date(Date.now() + 7 * 864e5),
+      respondedAt: new Date(),
+    },
+  });
+  const view = (resourceType: "HEALTH_SECTION" | "RECORD_CATEGORY", resourceKey: string) => ({ resourceType, resourceKey, action: "VIEW" as const });
+  const grant = await db.accessGrant.create({
+    data: {
+      patientId: martin.id,
+      doctorUserId,
+      requestId: request.id,
+      expiresAt: new Date(Date.now() + 30 * 864e5),
+      permissions: {
+        create: [
+          view("HEALTH_SECTION", "GENERAL"),
+          view("HEALTH_SECTION", "ALLERGIES"),
+          view("HEALTH_SECTION", "MEDICATIONS"),
+          view("HEALTH_SECTION", "CONDITIONS"),
+          view("RECORD_CATEGORY", "laboratorio"),
+          view("RECORD_CATEGORY", "cardiologia"),
+          { resourceType: "RECORD_CATEGORY", resourceKey: "cardiologia", action: "CREATE_MEDICAL_ENTRY" },
+        ],
+      },
+    },
+  });
+
+  // Informe de demo firmado por el Dr. Pérez (con una corrección para mostrar el versionado).
+  const category = await db.medicalCategory.findUniqueOrThrow({ where: { slug: "cardiologia" } });
+  const v1 = "Paciente de 36 años con hipertensión arterial en tratamiento con enalapril 10 mg cada 12 horas.\nTA 130/85 mmHg. ECG sin alteraciones.\nIndicación: continuar tratamiento. Control en 6 meses. (Informe de demostración, datos ficticios.)";
+  const v2 = "Paciente de 36 años con hipertensión arterial en tratamiento con enalapril 10 mg cada 12 horas.\nTA 128/82 mmHg. ECG sin alteraciones.\nIndicación: continuar tratamiento. Control en 6 meses. (Informe de demostración, datos ficticios.)";
+  const record = await db.medicalRecord.create({
+    data: {
+      patientId: martin.id,
+      title: "Informe de control cardiológico",
+      occurredOn: new Date(new Date().toISOString().slice(0, 10) + "T00:00:00.000Z"),
+      categoryId: category.id,
+      specialty: "Clínica médica",
+      professionalName: "Juan Pérez (MN-000001)",
+      source: "DOCTOR",
+      createdById: doctorUserId,
+      searchText: normalize(`Informe de control cardiológico Cardiología Clínica médica Juan Pérez informe ${v2}`),
+    },
+  });
+  await db.medicalReport.create({
+    data: {
+      recordId: record.id,
+      patientId: martin.id,
+      authorUserId: doctorUserId,
+      authorName: "Juan Pérez",
+      licenseNumber: "MN-000001",
+      licenseJurisdiction: "Nación (Matrícula Nacional)",
+      specialty: "Clínica médica",
+      currentVersion: 2,
+      versions: {
+        create: [
+          { version: 1, title: "Informe de control cardiológico", content: v1, contentSha256: createHash("sha256").update(v1).digest("hex"), createdById: doctorUserId },
+          { version: 2, title: "Informe de control cardiológico", content: v2, changeReason: "Corrección del valor de tensión arterial", contentSha256: createHash("sha256").update(v2).digest("hex"), createdById: doctorUserId },
+        ],
+      },
+    },
+  });
+  await db.accessLog.createMany({
+    data: [
+      { patientId: martin.id, actorUserId: martinUserId, grantId: grant.id, action: "GRANT_CREATED" },
+      { patientId: martin.id, actorUserId: doctorUserId, grantId: grant.id, action: "VIEW_PATIENT" },
+      { patientId: martin.id, actorUserId: doctorUserId, grantId: grant.id, action: "CREATE_REPORT" },
+    ],
+  });
+
+  // Solicitud pendiente del Dr. Pérez a Carla (para probar aceptar / rechazar).
+  await db.accessRequest.create({
+    data: {
+      patientId: carla.id,
+      doctorUserId,
+      message: "Revisión de estudios por imágenes",
+      requestedResources: ["HEALTH_SECTION:GENERAL", "HEALTH_SECTION:ALLERGIES", "RECORD_CATEGORY:diagnostico-por-imagenes"],
+      expiresAt: new Date(Date.now() + 7 * 864e5),
+    },
   });
 }
 

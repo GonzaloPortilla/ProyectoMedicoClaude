@@ -10,6 +10,7 @@ import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { SourceBadge } from "@/components/status/source-badge";
 import { CategoryIcon } from "@/features/records/components/category-icon";
 import { DeleteRecordButton } from "@/features/records/components/delete-record-button";
+import { ReportView } from "@/features/access/components/report-view";
 import { getRecord } from "@/server/medical/records";
 import { requirePatient } from "@/server/patient/context";
 import { formatBytes } from "@/lib/text";
@@ -50,12 +51,18 @@ export default async function RecordDetailPage({
           </span>
         }
         title={record.title}
-        action={<DeleteRecordButton recordId={record.id} title={record.title} />}
+        action={record.source === "PATIENT" && !record.report ? <DeleteRecordButton recordId={record.id} title={record.title} /> : undefined}
       />
       {created === "1" ? (
         <Alert tone="success" className="mb-5">
           Guardado. Ya forma parte de tu historial.
         </Alert>
+      ) : null}
+
+      {record.report ? (
+        <div className="mb-5">
+          <ReportView report={record.report} />
+        </div>
       ) : null}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)]">

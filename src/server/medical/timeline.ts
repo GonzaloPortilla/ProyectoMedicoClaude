@@ -29,12 +29,28 @@ function yearRange(year?: number) {
   return year ? { gte: new Date(Date.UTC(year, 0, 1)), lt: new Date(Date.UTC(year + 1, 0, 1)) } : undefined;
 }
 
-export async function getTimeline(patientId: string, filters: TimelineFilters): Promise<TimelineItem[]> {
+export type TimelineOptions = {
+  /**
+   * Restringe el historial a estas categorías (vista de un médico con permisos parciales).
+   * Se aplica en la consulta a la base: lo no permitido nunca se lee.
+   */
+  allowedCategories?: readonly string[];
+  recordHref?: (recordId: string) => string | null;
+  healthHref?: (anchor: string) => string | null;
+};
+
+export async function getTimeline(patientId: string, filters: TimelineFilters, options: TimelineOptions = {}): Promise<TimelineItem[]> {
   const categories = await db.medicalCategory.findMany({ select: { slug: true, name: true } });
   const catName = (slug: string) => categories.find((c) => c.slug === slug)?.name ?? slug;
   const range = yearRange(filters.year);
+  const allowed = options.allowedCategories;
+  const recordHref = options.recordHref ?? ((id: string) => `/patient/documents/${id}`);
+  const healthHref = options.healthHref ?? ((anchor: string) => `/patient/health#${anchor}`);
+  if (allowed && filters.category && !allowed.includes(filters.category)) return [];
   // Los datos de "Mi Salud" no tienen especialidad: si se filtra por especialidad, sólo aparecen registros.
-  const includeHealth = (kind: keyof typeof HEALTH_CATEGORY) => !filters.specialty && (!filters.category || filters.category === HEALTH_CATEGORY[kind]);
+  const includeHealth = (kind: keyof typeof HEALTH_CATEGORY) =>
+    !filters.specialty && (!filters.category || filters.category === HEALTH_CATEGORY[kind]) && (!allowed || allowed.includes(HEALTH_CATEGORY[kind]));
+  const categoryWhere = filters.category ? { category: { slug: filters.category } } : allowed ? { category: { slug: { in: [...allowed] } } } : {};
   const instFilter = filters.institution ? { institutionId: filters.institution } : {};
 
   const [records, surgeries, hospitalizations, vaccinations] = await Promise.all([
@@ -42,7 +58,7 @@ export async function getTimeline(patientId: string, filters: TimelineFilters): 
       where: {
         patientId,
         ...(range ? { occurredOn: range } : {}),
-        ...(filters.category ? { category: { slug: filters.category } } : {}),
+        ...categoryWhere,
         ...(filters.specialty ? { specialty: filters.specialty } : {}),
         ...instFilter,
       },
@@ -82,7 +98,7 @@ export async function getTimeline(patientId: string, filters: TimelineFilters): 
       professional: r.professionalName,
       fileCount: r._count.files,
       source: r.source,
-      href: `/patient/documents/${r.id}`,
+      href: recordHref(r.id),
     })),
     ...surgeries.map((x) => ({
       key: `surgery:${x.id}`,
@@ -96,7 +112,7 @@ export async function getTimeline(patientId: string, filters: TimelineFilters): 
       professional: null,
       fileCount: 0,
       source: x.source,
-      href: "/patient/health#surgery",
+      href: healthHref("surgery"),
     })),
     ...hospitalizations.map((x) => ({
       key: `hospitalization:${x.id}`,
@@ -110,7 +126,7 @@ export async function getTimeline(patientId: string, filters: TimelineFilters): 
       professional: null,
       fileCount: 0,
       source: x.source,
-      href: "/patient/health#hospitalization",
+      href: healthHref("hospitalization"),
     })),
     ...vaccinations.map((x) => ({
       key: `vaccination:${x.id}`,
@@ -124,7 +140,7 @@ export async function getTimeline(patientId: string, filters: TimelineFilters): 
       professional: null,
       fileCount: 0,
       source: x.source,
-      href: "/patient/health#vaccination",
+      href: healthHref("vaccination"),
     })),
   ];
 

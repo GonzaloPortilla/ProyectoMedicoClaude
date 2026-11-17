@@ -74,6 +74,14 @@ model User {
   createdVaccinations Vaccination[]     @relation("VaccinationCreatedBy")
   createdFamilyItems  FamilyHistory[]   @relation("FamilyHistoryCreatedBy")
 
+  // Acceso médico (Fase 3)
+  accessRequests  AccessRequest[]        @relation("DoctorRequests")
+  accessGrants    AccessGrant[]          @relation("DoctorGrants")
+  accessLogs      AccessLog[]            @relation("AccessLogActor")
+  usedLinkCodes   PatientLinkCode[]      @relation("LinkCodeUsedBy")
+  reportsAuthored MedicalReport[]        @relation("ReportAuthor")
+  reportVersions  MedicalReportVersion[] @relation("ReportVersionAuthor")
+
   @@map("users")
 }
 
@@ -122,6 +130,13 @@ model PatientProfile {
   institutions      Institution[]
   records           MedicalRecord[]
   files             MedicalFile[]
+
+  // Acceso médico (Fase 3)
+  linkCodes      PatientLinkCode[]
+  accessRequests AccessRequest[]
+  accessGrants   AccessGrant[]
+  accessLogs     AccessLog[]
+  reports        MedicalReport[]
 
   @@map("patient_profiles")
 }
@@ -479,6 +494,8 @@ model MedicalRecord {
   institution Institution?    @relation(fields: [institutionId], references: [id], onDelete: SetNull)
   createdBy   User?           @relation("RecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   files       MedicalFile[]
+  /// Presente cuando el registro es un informe médico versionado.
+  report      MedicalReport?
 
   @@index([patientId, occurredOn])
   @@index([patientId, categoryId])
@@ -507,4 +524,196 @@ model MedicalFile {
   @@index([patientId])
   @@index([recordId])
   @@map("medical_files")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FASE 3 — Acceso de médicos con autorización explícita del paciente
+//
+// Flujo: el paciente genera un código de un solo uso → el médico (verificado) lo
+// ingresa y crea una AccessRequest → el paciente la acepta eligiendo qué compartir
+// y por cuánto tiempo → se crea un AccessGrant con N AccessPermission
+// (tipo de recurso + clave + acción). El paciente puede revocarlo en cualquier momento.
+//
+// Un grant sólo es válido si: status = ACTIVE, revokedAt = null,
+// expiresAt es null (permanente) o futura, y el médico sigue VERIFICADO.
+// Esto se evalúa en CADA request (src/server/access/policy.ts); no hay caché.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum AccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum AccessGrantStatus {
+  ACTIVE
+  REVOKED
+  SUPERSEDED
+}
+
+/// Tipo de recurso sobre el que se otorga un permiso. Extensible.
+enum AccessResourceType {
+  /// Una sección de "Mi salud" (GENERAL, ALLERGIES, CONDITIONS, MEDICATIONS, FAMILY_HISTORY).
+  HEALTH_SECTION
+  /// Una categoría de registros médicos (slug de MedicalCategory).
+  RECORD_CATEGORY
+}
+
+/// Acción permitida. Extensible.
+enum AccessAction {
+  VIEW
+  UPLOAD
+  CREATE_MEDICAL_ENTRY
+}
+
+enum AccessLogAction {
+  REQUEST_CREATED
+  GRANT_CREATED
+  GRANT_REVOKED
+  VIEW_PATIENT
+  VIEW_RECORD
+  VIEW_FILE
+  CREATE_REPORT
+  CORRECT_REPORT
+}
+
+/// Código de vinculación de un solo uso que el paciente comparte con su médico.
+model PatientLinkCode {
+  id           String    @id @default(cuid())
+  patientId    String
+  /// SHA-256 del código. El código en claro sólo lo ve el paciente.
+  codeHash     String    @unique
+  expiresAt    DateTime
+  usedAt       DateTime?
+  usedByUserId String?
+  createdAt    DateTime  @default(now())
+
+  patient PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  usedBy  User?          @relation("LinkCodeUsedBy", fields: [usedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([patientId])
+  @@map("patient_link_codes")
+}
+
+model AccessRequest {
+  id                 String              @id @default(cuid())
+  patientId          String
+  doctorUserId       String
+  status             AccessRequestStatus @default(PENDING)
+  message            String?
+  /// Recursos que el médico sugiere (p. ej. "RECORD_CATEGORY:cardiologia"). El paciente decide.
+  requestedResources String[]            @default([])
+  expiresAt          DateTime
+  respondedAt        DateTime?
+  createdAt          DateTime            @default(now())
+
+  patient PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor  User           @relation("DoctorRequests", fields: [doctorUserId], references: [id], onDelete: Cascade)
+  grant   AccessGrant?
+
+  @@index([patientId, status])
+  @@index([doctorUserId, status])
+  @@map("access_requests")
+}
+
+model AccessGrant {
+  id           String            @id @default(cuid())
+  patientId    String
+  doctorUserId String
+  requestId    String?           @unique
+  status       AccessGrantStatus @default(ACTIVE)
+  startsAt     DateTime          @default(now())
+  /// null = permanente (hasta que el paciente lo revoque).
+  expiresAt    DateTime?
+  revokedAt    DateTime?
+  createdAt    DateTime          @default(now())
+
+  patient     PatientProfile     @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor      User               @relation("DoctorGrants", fields: [doctorUserId], references: [id], onDelete: Cascade)
+  request     AccessRequest?     @relation(fields: [requestId], references: [id], onDelete: SetNull)
+  permissions AccessPermission[]
+  logs        AccessLog[]
+
+  @@index([doctorUserId, status])
+  @@index([patientId, status])
+  @@map("access_grants")
+}
+
+/// paciente + médico (vía grant) + recurso + acción. Duración: la del grant.
+model AccessPermission {
+  id           String             @id @default(cuid())
+  grantId      String
+  resourceType AccessResourceType
+  resourceKey  String
+  action       AccessAction
+
+  grant AccessGrant @relation(fields: [grantId], references: [id], onDelete: Cascade)
+
+  @@unique([grantId, resourceType, resourceKey, action])
+  @@map("access_permissions")
+}
+
+/// Registro inmutable de cada acceso y acción de un médico sobre datos de un paciente.
+model AccessLog {
+  id          String          @id @default(cuid())
+  patientId   String
+  actorUserId String?
+  grantId     String?
+  action      AccessLogAction
+  resourceId  String?
+  createdAt   DateTime        @default(now())
+
+  patient PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  actor   User?          @relation("AccessLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+  grant   AccessGrant?   @relation(fields: [grantId], references: [id], onDelete: SetNull)
+
+  @@index([patientId, createdAt])
+  @@index([grantId])
+  @@map("access_logs")
+}
+
+/// Informe médico creado por un médico autorizado. Se muestra en el historial a través de su MedicalRecord.
+/// Los datos del autor se guardan como snapshot (pueden cambiar luego en su perfil).
+model MedicalReport {
+  id                  String   @id @default(cuid())
+  recordId            String   @unique
+  patientId           String
+  authorUserId        String?
+  authorName          String
+  licenseNumber       String
+  licenseJurisdiction String
+  specialty           String
+  currentVersion      Int      @default(1)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  record   MedicalRecord          @relation(fields: [recordId], references: [id], onDelete: Restrict)
+  patient  PatientProfile         @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  author   User?                  @relation("ReportAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  versions MedicalReportVersion[]
+
+  @@index([patientId])
+  @@map("medical_reports")
+}
+
+/// Versión de un informe. APPEND-ONLY: la base de datos rechaza UPDATE y DELETE (trigger).
+/// Una corrección crea una versión nueva y conserva las anteriores.
+model MedicalReportVersion {
+  id            String   @id @default(cuid())
+  reportId      String
+  version       Int
+  title         String
+  content       String
+  /// Motivo de la corrección (null en la versión 1).
+  changeReason  String?
+  contentSha256 String
+  createdById   String?
+  createdAt     DateTime @default(now())
+
+  report    MedicalReport @relation(fields: [reportId], references: [id], onDelete: Restrict)
+  createdBy User?         @relation("ReportVersionAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@unique([reportId, version])
+  @@map("medical_report_versions")
 }

@@ -1,6 +1,6 @@
 import type { Role } from "@/generated/prisma/enums";
 
-export type NavIcon = "home" | "profile" | "doctor" | "overview" | "users" | "verify" | "health" | "documents" | "history" | "emergency" | "search";
+export type NavIcon = "home" | "profile" | "doctor" | "overview" | "users" | "verify" | "health" | "documents" | "history" | "emergency" | "search" | "doctors";
 export type NavItem = { href: string; label: string; icon: NavIcon; exact?: boolean };
 export type NavSection = { role: Role; title: string; items: NavItem[] };
 
@@ -14,6 +14,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: "/patient/health", label: "Mi salud", icon: "health" },
       { href: "/patient/documents", label: "Estudios", icon: "documents" },
       { href: "/patient/history", label: "Historial", icon: "history" },
+      { href: "/patient/doctors", label: "Mis médicos", icon: "doctors" },
       { href: "/patient/emergency", label: "Emergencia", icon: "emergency" },
       { href: "/patient/search", label: "Buscar", icon: "search" },
       { href: "/patient/profile", label: "Mi perfil", icon: "profile" },
@@ -22,7 +23,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     role: "DOCTOR",
     title: "Profesional",
-    items: [{ href: "/doctor", label: "Panel profesional", icon: "doctor", exact: true }],
+    items: [{ href: "/doctor", label: "Panel profesional", icon: "doctor" }],
   },
   {
     role: "ADMIN",
