@@ -53,6 +53,12 @@ const ALLOWED_METADATA_KEYS = new Set([
   "mimeType",
   "role",
   "migratedFrom",
+  // Fase 6: sólo conteos y estados, nunca valores ni nombres de resultados.
+  "resultCount",
+  "status",
+  "confirmed",
+  "discarded",
+  "edited",
 ]);
 
 function sanitizeMetadata(meta: Record<string, unknown> | undefined): Prisma.InputJsonValue | undefined {

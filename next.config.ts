@@ -14,8 +14,8 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
-  // El cliente Prisma y el driver de Postgres se ejecutan sólo en el servidor.
-  serverExternalPackages: ["@node-rs/argon2"],
+  // Paquetes nativos o con workers (hash, OCR, render de PDF): se cargan desde node_modules.
+  serverExternalPackages: ["@node-rs/argon2", "tesseract.js", "@napi-rs/canvas", "unpdf"],
   experimental: {
     // Subida de estudios médicos: hasta 15 MB por archivo (+ margen del formulario).
     serverActions: { bodySizeLimit: "16mb" },

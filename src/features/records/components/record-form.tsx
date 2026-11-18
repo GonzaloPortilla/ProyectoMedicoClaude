@@ -15,6 +15,7 @@ type Option = { slug: string; name: string };
 export function RecordForm({ categories, institutions, defaultCategory }: { categories: Option[]; institutions: string[]; defaultCategory?: string }) {
   const [state, action] = useActionState(createRecordAction, initialFormState);
   const [showMore, setShowMore] = useState(false);
+  const [blocked, setBlocked] = useState(false);
   const e = state.fieldErrors ?? {};
   const v = state.values ?? {};
   const today = new Date().toISOString().slice(0, 10);
@@ -27,7 +28,7 @@ export function RecordForm({ categories, institutions, defaultCategory }: { cate
         <Alert tone="info">Por seguridad, si había un archivo seleccionado tenés que volver a elegirlo.</Alert>
       ) : null}
 
-      <FileDropzone error={e.file} />
+      <FileDropzone error={e.file} onBlockedChange={setBlocked} />
 
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
         <TextField label="Fecha" name="occurredOn" type="date" max={today} min="1900-01-01" defaultValue={v.occurredOn ?? today} error={e.occurredOn} required />
@@ -76,7 +77,7 @@ export function RecordForm({ categories, institutions, defaultCategory }: { cate
 
       <div className="flex flex-col-reverse gap-3 border-t border-line pt-5 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-[13px] text-muted">Sólo vos vas a poder ver este archivo.</p>
-        <SubmitButton size="lg" pendingLabel="Guardando…" className="w-full sm:w-auto">
+        <SubmitButton size="lg" pendingLabel="Guardando…" className="w-full sm:w-auto" disabled={blocked}>
           Guardar
         </SubmitButton>
       </div>

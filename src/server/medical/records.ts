@@ -28,25 +28,41 @@ export async function listActiveCategories() {
   });
 }
 
-function buildSearchText(parts: Array<string | null | undefined | string[]>): string {
+export function buildSearchText(parts: Array<string | null | undefined | string[]>): string {
   return normalizeText(parts.flat().filter(Boolean).join(" ")).slice(0, 8000);
 }
 
-export async function createRecord(patientId: string, actor: Actor, input: RecordInput, file?: UploadedFile | null, ctx: AuditContext = {}): Promise<Result<{ recordId: string }>> {
+export type CreateRecordOptions = {
+  /** Crear la extracción para analizar el archivo (sólo archivos subidos por el paciente). */
+  analyze?: boolean;
+  /** true si el paciente ya completó los datos (formulario manual); false en la carga rápida. */
+  metadataReviewed?: boolean;
+};
+
+export async function createRecord(
+  patientId: string,
+  actor: Actor,
+  input: RecordInput,
+  file?: UploadedFile | null,
+  ctx: AuditContext = {},
+  opts: CreateRecordOptions = {},
+): Promise<Result<{ recordId: string; fileId: string | null; extractionId: string | null }>> {
   const category = await db.medicalCategory.findFirst({ where: { slug: input.categorySlug, isActive: true }, select: { id: true, name: true } });
   if (!category) return { ok: false, field: "categorySlug", error: "Elegí un tipo válido" };
 
-  let stored: { key: string; mime: string; safeName: string; size: number; sha256: string } | null = null;
+  let stored: { key: string; mime: string; safeName: string; size: number; sha256: string; originalSha256: string } | null = null;
   if (file) {
     const check = validateUpload(file.name, file.size, file.bytes);
     if (!check.ok) return { ok: false, field: "file", error: check.error };
     const key = newStorageKey();
+    // Hash de los bytes tal como llegaron: permite detectar archivos ya cargados.
+    const originalSha256 = createHash("sha256").update(file.bytes).digest("hex");
     // Privacidad: se quitan metadatos EXIF/GPS de las imágenes antes de guardarlas.
     const buffer = stripMetadata(check.mime, Buffer.from(file.bytes));
     const scan = await scanFile(buffer, check.mime);
     if (!scan.clean) return { ok: false, field: "file", error: "El archivo no superó el control de seguridad." };
     await getStorage().put(key, buffer, check.mime);
-    stored = { key, mime: check.mime, safeName: check.safeName, size: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
+    stored = { key, mime: check.mime, safeName: check.safeName, size: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex"), originalSha256 };
   }
 
   const title = input.title ?? (stored ? stored.safeName.replace(/\.[^.]+$/, "") : category.name);
@@ -54,7 +70,7 @@ export async function createRecord(patientId: string, actor: Actor, input: Recor
   try {
     const record = await db.$transaction(async (tx) => {
       const institution = await upsertInstitution(tx, patientId, input.institution);
-      return tx.medicalRecord.create({
+      const created = await tx.medicalRecord.create({
         data: {
           patientId,
           title,
@@ -77,13 +93,21 @@ export async function createRecord(patientId: string, actor: Actor, input: Recor
                   mimeType: stored.mime,
                   sizeBytes: stored.size,
                   sha256: stored.sha256,
+                  originalSha256: stored.originalSha256,
                   uploadedById: actor.userId,
                 },
               }
             : undefined,
         },
-        select: { id: true },
+        select: { id: true, files: { select: { id: true } } },
       });
+      const fileId = created.files[0]?.id ?? null;
+      // El análisis guarda su resultado aparte: el archivo original no se toca.
+      const extraction =
+        fileId && opts.analyze && actor.source === "PATIENT"
+          ? await tx.documentExtraction.create({ data: { patientId, recordId: created.id, fileId, metadataReviewed: opts.metadataReviewed ?? true }, select: { id: true } })
+          : null;
+      return { id: created.id, fileId, extractionId: extraction?.id ?? null };
     });
     await audit(
       {
@@ -97,7 +121,7 @@ export async function createRecord(patientId: string, actor: Actor, input: Recor
       },
       ctx,
     );
-    return { ok: true, data: { recordId: record.id } };
+    return { ok: true, data: { recordId: record.id, fileId: record.fileId, extractionId: record.extractionId } };
   } catch (error) {
     // Si falla la base, no dejar el archivo huérfano en el storage.
     if (stored) await getStorage().delete(stored.key).catch(() => {});

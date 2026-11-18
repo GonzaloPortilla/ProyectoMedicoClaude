@@ -40,6 +40,10 @@ erDiagram
   User ||--o{ AccessRequest : "solicita (médico)"
   AccessRequest ||--o| AccessGrant : genera
   AccessGrant ||--o{ AccessPermission : "recurso+acción"
+  MedicalFile ||--o| DocumentExtraction : "análisis (aparte)"
+  MedicalRecord ||--o{ MedicalMeasurement : "resultados"
+  DocumentExtraction ||--o{ MedicalMeasurement : detectó
+  MeasurementConcept ||--o{ MedicalMeasurement : normaliza
 ```
 
 `AuditEvent` no tiene relaciones a propósito (ver más abajo).
@@ -89,6 +93,18 @@ erDiagram
 
 Un grant es **vigente** si `status = ACTIVE`, `revokedAt IS NULL`, `expiresAt` es null o futura, y el médico sigue `VERIFIED`. Se evalúa en cada request.
 
+### Procesamiento de estudios (Fase 6)
+
+| Modelo | Propósito | Campos clave |
+| --- | --- | --- |
+| `DocumentExtraction` | Resultado del análisis automático de **un** archivo. Nunca reemplaza al original | `status` (`UPLOADED` → `PROCESSING` → `READY_FOR_REVIEW` → `CONFIRMED`, o `FAILED`), `method` (`PDF_TEXT` / `OCR`), `provider`, `text`, `suggestions` (metadatos propuestos con confianza), `metadataReviewed`, `errorCode` |
+| `MeasurementConcept` | Catálogo **extensible** de indicadores normalizados (30 iniciales: glucemia, colesterol total/HDL/LDL, hemograma, función renal, tiroides…) | `code`, `displayName`, `aliases[]` (sinónimos normalizados), `defaultUnit`, `loincCode`, `snomedCode` (vacíos, preparados para mapear) |
+| `MedicalMeasurement` | Un valor medido con su procedencia completa | `originalName` (texto del documento, nunca se modifica), `conceptId` + `normalizedKey` (agrupación), `valueText`, `valueNumeric`, `unit`, `refLow`, `refHigh`, `refText`, `documentFlag`, `measuredOn`, `institutionId`, `extractionMethod`, `confidence`, `reviewStatus` (`PENDING` / `CONFIRMED` / `DISCARDED`), `detected` (valores originales), `editedAt`, `confirmedById`, `verifiedById` |
+
+`MedicalFile` suma `originalSha256`: el hash de los bytes **tal como los subió el usuario** (detecta archivos ya cargados aunque a las imágenes se les quiten los metadatos GPS).
+
+Una medición pertenece a un **registro**: su categoría define quién puede verla. Un médico recibe sólo mediciones `CONFIRMED` de registros de categorías con permiso `VIEW`.
+
 ### Auditoría
 
 `AuditEvent`: `seq` (orden total), `action`, `outcome`, `actorType`, `actorUserId`, `subjectPatientId`, `resourceType`, `resourceId`, `grantId`, `ip` (anonimizada), `userAgent`, `metadata` (JSON de lista blanca), `prevHash` y `hash`.
@@ -100,6 +116,8 @@ Un grant es **vigente** si `status = ACTIVE`, `revokedAt IS NULL`, `expiresAt` e
 | `audit_events` | Trigger `audit_events_chain` (asigna `seq` bajo un lock y calcula `prevHash`/`hash` con SHA-256). Triggers que rechazan `UPDATE`/`DELETE` y `TRUNCATE` (salvo `SET app.audit_maintenance = 'on'`, usado sólo por `demo:reset` y los tests). Función `audit_verify_chain()` para verificar la cadena |
 | `medical_report_versions` | Trigger que rechaza `UPDATE` y `DELETE` (sólo permite anular la referencia al autor por `ON DELETE SET NULL`) |
 | `medical_reports` → `medical_records` | `ON DELETE RESTRICT`: no se puede borrar el registro de un informe |
+| `medical_files` | Trigger `medical_files_immutable`: rechaza cambiar `storageKey`, `sha256`, `originalSha256`, `sizeBytes`, `mimeType`, `patientId` o `recordId`. **El documento original no se puede modificar** |
+| `document_extractions`, `medical_measurements` | Trigger que exige que el registro pertenezca al mismo paciente (`phase6_same_patient`) |
 
 ## Migraciones
 
@@ -111,6 +129,7 @@ Un grant es **vigente** si `status = ACTIVE`, `revokedAt IS NULL`, `expiresAt` e
 | `…_immutability_allow_set_null` | Ajuste de los triggers para permitir `ON DELETE SET NULL` |
 | `…_security_audit` | Auditoría encadenada e inmutable (migra el registro de la Fase 3), MFA, verificación de email, sesiones por inactividad |
 | `…_verify_existing_accounts` | Marca como verificadas las cuentas creadas antes de exigir verificación |
+| `…_document_processing` | Extracciones, catálogo de conceptos (con datos iniciales), mediciones, hash original de archivos, triggers de inmutabilidad e integridad, nuevas acciones de auditoría |
 
 Para crear una migración nueva durante el desarrollo:
 
@@ -127,4 +146,6 @@ Si una migración borra datos, revisá el SQL generado antes de aplicarla.
 - `npm run db:seed` es idempotente: sólo crea lo que falta.
 - `npm run demo:reset` vacía todas las tablas (incluida la auditoría, con la marca de mantenimiento) y el storage local, y recarga la demo. Se niega a correr en producción.
 
-Los archivos demo (PDF de laboratorio, imágenes de ECG y radiografía) se generan por código, sin datos reales.
+Los archivos demo (PDF de laboratorio, imágenes de ECG y radiografía) se generan por código, sin datos reales (`prisma/demo-documents.ts`). Los PDF de laboratorio de Martín (2023 a 2026) se analizan con el mismo pipeline de la app: sus resultados quedan confirmados para que Evolución muestre datos, salvo el perfil lipídico de abril de 2026, que queda **por revisar** para la demo.
+
+`npm run demo:samples` genera en `docs/samples/` un PDF con texto, una foto y un PDF escaneado para probar la carga inteligente.

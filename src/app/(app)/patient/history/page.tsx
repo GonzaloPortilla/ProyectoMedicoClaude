@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CalendarClock, Paperclip, Plus } from "lucide-react";
+import { CalendarClock, ExternalLink, FlaskConical, Paperclip, Plus, ScanText, Sparkles } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { buttonClasses } from "@/components/ui/button";
+import { signedFileUrl } from "@/server/files/urls";
 import { PageHeader } from "@/components/page-header";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,7 +18,8 @@ import { joinUnique } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Historial" };
 
-const dayMonth = new Intl.DateTimeFormat("es-AR", { day: "numeric", month: "long", timeZone: "UTC" });
+const dayMonth = new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" });
+const cardDate = (d: Date) => dayMonth.format(d).replace(/\./g, "").replace(/ de /g, " ");
 
 function groupByYear(items: TimelineItem[]) {
   const groups = new Map<number, TimelineItem[]>();
@@ -30,7 +34,7 @@ const selectCls =
   "h-10 w-full appearance-none rounded-xl border border-line-strong bg-surface bg-[url('data:image/svg+xml;utf8,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 20 20%22><path d=%22M6 8l4 4 4-4%22 fill=%22none%22 stroke=%22%236b7486%22 stroke-width=%221.6%22/></svg>')] bg-[length:16px] bg-[right_10px_center] bg-no-repeat pr-9 pl-3 text-sm shadow-card focus:border-brand-500 focus:ring-4 focus:ring-brand-500/15 focus:outline-none";
 
 export default async function HistoryPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const { patientId } = await requirePatient();
+  const { user, patientId } = await requirePatient();
   const filters = timelineFiltersSchema.parse(await searchParams);
   const [items, options] = await Promise.all([getTimeline(patientId, filters), getTimelineFilterOptions(patientId)]);
   const hasFilters = !!(filters.year || filters.category || filters.specialty || filters.institution);
@@ -124,35 +128,71 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
               </h2>
               <ol className="relative ml-[19px] border-l border-line-strong/70 sm:ml-[23px]">
                 {yearItems.map((item) => {
-                  const body = (
-                    <>
-                      <p className="text-[13px] font-medium text-muted">{dayMonth.format(item.date)}</p>
-                      <p className="mt-0.5 font-medium break-words text-ink">{item.title}</p>
-                      <p className="mt-0.5 text-[13px] break-words text-muted">
-                        {joinUnique([item.categoryName, item.specialty, item.institution, item.professional])}
-                      </p>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        {item.fileCount ? (
-                          <span className="inline-flex items-center gap-1 text-xs text-muted">
-                            <Paperclip className="size-3" /> {item.fileCount === 1 ? "1 archivo" : `${item.fileCount} archivos`}
-                          </span>
-                        ) : null}
-                        {item.source !== "PATIENT" ? <SourceBadge source={item.source} /> : null}
-                      </div>
-                    </>
-                  );
+                  const results =
+                    item.processing === "UPLOADED" || item.processing === "PROCESSING" ? (
+                      <Badge tone="blue">
+                        <ScanText className="size-3" aria-hidden /> Analizando…
+                      </Badge>
+                    ) : item.pendingCount ? (
+                      <Badge tone="amber">
+                        <Sparkles className="size-3" aria-hidden /> {item.resultCount === 1 ? "1 resultado detectado" : `${item.resultCount} resultados detectados`} · por revisar
+                      </Badge>
+                    ) : item.processing === "READY_FOR_REVIEW" ? (
+                      <Badge tone="amber">
+                        <Sparkles className="size-3" aria-hidden /> Datos por revisar
+                      </Badge>
+                    ) : item.resultCount ? (
+                      <Badge tone="brand">
+                        <FlaskConical className="size-3" aria-hidden /> {item.resultCount === 1 ? "1 resultado" : `${item.resultCount} resultados`}
+                      </Badge>
+                    ) : null;
+                  const reviewHref = item.kind === "record" ? `/patient/documents/${item.key.slice("record:".length)}/review` : null;
                   return (
                     <li key={item.key} className="relative pb-4 pl-8 last:pb-0 sm:pl-10">
                       <span className="absolute top-3 -left-[19px] sm:-left-[23px]">
                         <CategoryIcon slug={item.categorySlug} className="size-[38px] bg-surface sm:size-[46px]" />
                       </span>
-                      {item.href ? (
-                        <Link href={item.href} className="block rounded-2xl border border-line bg-surface p-4 shadow-card transition-shadow hover:shadow-raised">
-                          {body}
-                        </Link>
-                      ) : (
-                        <div className="rounded-2xl border border-line bg-surface p-4 shadow-card">{body}</div>
-                      )}
+                      <div className={`relative rounded-2xl border border-line bg-surface p-4 shadow-card ${item.href ? "transition-shadow hover:shadow-raised" : ""}`}>
+                        <p className="text-xs font-semibold tracking-wide text-muted uppercase">{cardDate(item.date)}</p>
+                        <p className="mt-0.5 font-medium break-words text-ink">
+                          {item.href ? (
+                            // Enlace "estirado": toda la tarjeta abre el detalle; los botones quedan por encima.
+                            <Link href={item.href} className="after:absolute after:inset-0 after:rounded-2xl focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-brand-500">
+                              {item.title}
+                            </Link>
+                          ) : (
+                            item.title
+                          )}
+                        </p>
+                        <p className="mt-0.5 text-[13px] break-words text-muted">{joinUnique([item.institution, item.categoryName, item.specialty, item.professional])}</p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {results}
+                          {item.fileCount ? (
+                            <span className="inline-flex items-center gap-1 text-xs text-muted">
+                              <Paperclip className="size-3" /> {item.fileCount === 1 ? "1 archivo" : `${item.fileCount} archivos`}
+                            </span>
+                          ) : null}
+                          {item.source !== "PATIENT" ? <SourceBadge source={item.source} /> : null}
+                        </div>
+                        {item.kind === "record" && (item.resultCount || item.firstFileId || item.processing === "READY_FOR_REVIEW") ? (
+                          <div className="relative z-10 mt-3 flex flex-wrap gap-2">
+                            {item.pendingCount || item.processing === "READY_FOR_REVIEW" ? (
+                              <Link href={reviewHref!} className={buttonClasses({ size: "sm" })}>
+                                Revisar
+                              </Link>
+                            ) : item.resultCount ? (
+                              <Link href={`${item.href}#resultados`} className={buttonClasses({ variant: "secondary", size: "sm" })}>
+                                Ver resultados
+                              </Link>
+                            ) : null}
+                            {item.firstFileId ? (
+                              <a href={signedFileUrl(user.id, item.firstFileId)} target="_blank" rel="noopener noreferrer" className={buttonClasses({ variant: "ghost", size: "sm" })}>
+                                <ExternalLink className="size-3.5" /> Ver documento
+                              </a>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
                     </li>
                   );
                 })}

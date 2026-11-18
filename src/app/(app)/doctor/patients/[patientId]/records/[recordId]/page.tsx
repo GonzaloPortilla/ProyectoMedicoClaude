@@ -16,6 +16,7 @@ import { audit } from "@/server/audit/log";
 import { requestContext } from "@/server/audit/request";
 import { signedFileUrl } from "@/server/files/urls";
 import { formatBytes } from "@/lib/text";
+import { MeasurementList } from "@/features/documents/components/measurement-list";
 import { formatDate } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Registro" };
@@ -123,6 +124,15 @@ export default async function DoctorRecordPage({
           </CardBody>
         </Card>
       </div>
+
+      {record.measurements.length ? (
+        <Card className="mt-5">
+          <CardHeader title={`Resultados (${record.measurements.length})`} description="Extraídos del documento y confirmados por el paciente. El documento original es la fuente." />
+          <CardBody>
+            <MeasurementList recordId={record.id} measurements={record.measurements} source={{ title: record.title, institution: record.institution?.name ?? null, date: record.occurredOn }} concepts={[]} editable={false} />
+          </CardBody>
+        </Card>
+      ) : null}
     </>
   );
 }

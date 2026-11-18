@@ -13,9 +13,12 @@ type FieldProps = {
   hint?: ReactNode;
   optional?: boolean;
   className?: string;
+  /** id del control; por defecto, el name (hace falta si el mismo campo aparece varias veces). */
+  id?: string;
 };
 
-function FieldShell({ label, name, error, hint, optional, className, children }: FieldProps & { children: ReactNode }) {
+function FieldShell({ label, name: fieldName, id, error, hint, optional, className, children }: FieldProps & { children: ReactNode }) {
+  const name = id ?? fieldName;
   const describedBy = error?.length ? `${name}-error` : hint ? `${name}-hint` : undefined;
   return (
     <div className={cn("space-y-1.5", className)} data-described-by={describedBy}>
@@ -39,12 +42,12 @@ function FieldShell({ label, name, error, hint, optional, className, children }:
 
 export function TextField({ label, name, error, hint, optional, className, ...props }: FieldProps & Omit<ComponentProps<"input">, "name">) {
   return (
-    <FieldShell label={label} name={name} error={error} hint={hint} optional={optional} className={className}>
+    <FieldShell label={label} name={name} id={props.id} error={error} hint={hint} optional={optional} className={className}>
       <input
-        id={name}
+        id={props.id ?? name}
         name={name}
         aria-invalid={error?.length ? true : undefined}
-        aria-describedby={error?.length ? `${name}-error` : hint ? `${name}-hint` : undefined}
+        aria-describedby={error?.length ? `${props.id ?? name}-error` : hint ? `${props.id ?? name}-hint` : undefined}
         className={cn(control, "h-11", error?.length ? errorState : okState)}
         {...props}
       />
@@ -63,13 +66,13 @@ export function SelectField({
   ...props
 }: FieldProps & Omit<ComponentProps<"select">, "name">) {
   return (
-    <FieldShell label={label} name={name} error={error} hint={hint} optional={optional} className={className}>
+    <FieldShell label={label} name={name} id={props.id} error={error} hint={hint} optional={optional} className={className}>
       <div className="relative">
         <select
-          id={name}
+          id={props.id ?? name}
           name={name}
           aria-invalid={error?.length ? true : undefined}
-          aria-describedby={error?.length ? `${name}-error` : hint ? `${name}-hint` : undefined}
+          aria-describedby={error?.length ? `${props.id ?? name}-error` : hint ? `${props.id ?? name}-hint` : undefined}
           className={cn(control, "h-11 appearance-none pr-10", error?.length ? errorState : okState)}
           {...props}
         >
@@ -85,9 +88,9 @@ export function SelectField({
 
 export function TextAreaField({ label, name, error, hint, optional, className, ...props }: FieldProps & Omit<ComponentProps<"textarea">, "name">) {
   return (
-    <FieldShell label={label} name={name} error={error} hint={hint} optional={optional} className={className}>
+    <FieldShell label={label} name={name} id={props.id} error={error} hint={hint} optional={optional} className={className}>
       <textarea
-        id={name}
+        id={props.id ?? name}
         name={name}
         aria-invalid={error?.length ? true : undefined}
         className={cn(control, "min-h-20 py-2.5", error?.length ? errorState : okState)}

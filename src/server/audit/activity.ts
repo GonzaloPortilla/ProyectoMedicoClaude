@@ -152,6 +152,32 @@ export async function listActivity(opts: { userId: string; patientId: string | n
         text = `${v("Corregiste", "corrigió")} el informe ${recordRef(e, meta)}`;
         detail = meta.fromVersion ? `Versión ${meta.fromVersion} → ${meta.toVersion}. La versión anterior se conserva.` : null;
         break;
+      case "DOCUMENT_PROCESSED": {
+        const n = typeof meta.resultCount === "number" ? meta.resultCount : 0;
+        text =
+          e.outcome === "SUCCESS"
+            ? `Se analizó automáticamente ${recordRef(e, meta)}`
+            : `No se pudo leer automáticamente ${recordRef(e, meta)}`;
+        detail = e.outcome === "SUCCESS" ? (n ? `${n === 1 ? "1 resultado detectado" : `${n} resultados detectados`}, pendientes de revisión.` : "Sin resultados de laboratorio detectados.") : "El documento original quedó guardado y se puede ver como siempre.";
+        break;
+      }
+      case "DOCUMENT_REVIEWED":
+        text = `${v("Confirmaste", "confirmó")} los datos de ${recordRef(e, meta)}`;
+        break;
+      case "MEASUREMENTS_REVIEWED": {
+        text = `${v("Revisaste", "revisó")} resultados de ${recordRef(e, meta)}`;
+        const parts = [
+          typeof meta.confirmed === "number" ? `${meta.confirmed} confirmado${meta.confirmed === 1 ? "" : "s"}` : null,
+          typeof meta.discarded === "number" ? `${meta.discarded} descartado${meta.discarded === 1 ? "" : "s"}` : null,
+          meta.edited ? "con correcciones" : null,
+          meta.status === "PENDING" ? "vuelto a pendiente" : null,
+        ].filter(Boolean);
+        detail = parts.length ? parts.join(" · ") : null;
+        break;
+      }
+      case "MEASUREMENTS_VIEWED":
+        text = self ? `Consultaste la evolución de resultados de ${patientName(e.subjectPatientId)}` : `${actor} consultó la evolución de tus resultados`;
+        break;
       case "ACCESS_REQUESTED":
         text = e.outcome === "SUCCESS" ? (self ? `Solicitaste acceso a ${patientName(e.subjectPatientId)}` : `${actor} solicitó acceso a tu información`) : "Intentaste vincular un paciente con un código inválido o vencido";
         break;

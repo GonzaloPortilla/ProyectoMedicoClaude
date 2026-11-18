@@ -1,5 +1,5 @@
 import "server-only";
-import type { DataSource } from "@/generated/prisma/enums";
+import type { DataSource, DocumentProcessingStatus } from "@/generated/prisma/enums";
 import { db } from "@/server/db";
 import type { TimelineFilters } from "@/features/records/schemas";
 
@@ -21,6 +21,12 @@ export type TimelineItem = {
   fileCount: number;
   source: DataSource;
   href: string | null;
+  /** Primer archivo (para "Ver documento"). */
+  firstFileId: string | null;
+  /** Resultados detectados (no descartados; sólo confirmados en la vista del médico). */
+  resultCount: number;
+  pendingCount: number;
+  processing: DocumentProcessingStatus | null;
 };
 
 const HEALTH_CATEGORY = { surgery: "cirugias", hospitalization: "internaciones", vaccination: "vacunas" } as const;
@@ -37,6 +43,8 @@ export type TimelineOptions = {
   allowedCategories?: readonly string[];
   recordHref?: (recordId: string) => string | null;
   healthHref?: (anchor: string) => string | null;
+  /** Vista del médico: sólo cuenta resultados confirmados y no expone el estado del análisis. */
+  confirmedOnly?: boolean;
 };
 
 export async function getTimeline(patientId: string, filters: TimelineFilters, options: TimelineOptions = {}): Promise<TimelineItem[]> {
@@ -73,7 +81,19 @@ export async function getTimeline(patientId: string, filters: TimelineFilters, o
         source: true,
         category: { select: { slug: true, name: true } },
         institution: { select: { name: true } },
-        _count: { select: { files: true } },
+        _count: {
+          select: {
+            files: true,
+            measurements: { where: options.confirmedOnly ? { reviewStatus: "CONFIRMED" } : { reviewStatus: { not: "DISCARDED" } } },
+          },
+        },
+        files: { select: { id: true }, orderBy: { createdAt: "asc" }, take: 1 },
+        ...(options.confirmedOnly
+          ? {}
+          : {
+              extractions: { select: { status: true }, orderBy: { createdAt: "desc" }, take: 1 },
+              measurements: { where: { reviewStatus: "PENDING" }, select: { id: true } },
+            }),
       },
     }),
     includeHealth("surgery")
@@ -99,6 +119,10 @@ export async function getTimeline(patientId: string, filters: TimelineFilters, o
       fileCount: r._count.files,
       source: r.source,
       href: recordHref(r.id),
+      firstFileId: r.files[0]?.id ?? null,
+      resultCount: r._count.measurements,
+      pendingCount: "measurements" in r ? (r.measurements as unknown[]).length : 0,
+      processing: "extractions" in r ? ((r.extractions as { status: DocumentProcessingStatus }[])[0]?.status ?? null) : null,
     })),
     ...surgeries.map((x) => ({
       key: `surgery:${x.id}`,
@@ -111,6 +135,10 @@ export async function getTimeline(patientId: string, filters: TimelineFilters, o
       institution: x.institution?.name ?? null,
       professional: null,
       fileCount: 0,
+      firstFileId: null,
+      resultCount: 0,
+      pendingCount: 0,
+      processing: null,
       source: x.source,
       href: healthHref("surgery"),
     })),
@@ -125,6 +153,10 @@ export async function getTimeline(patientId: string, filters: TimelineFilters, o
       institution: x.institution?.name ?? null,
       professional: null,
       fileCount: 0,
+      firstFileId: null,
+      resultCount: 0,
+      pendingCount: 0,
+      processing: null,
       source: x.source,
       href: healthHref("hospitalization"),
     })),
@@ -139,6 +171,10 @@ export async function getTimeline(patientId: string, filters: TimelineFilters, o
       institution: null,
       professional: null,
       fileCount: 0,
+      firstFileId: null,
+      resultCount: 0,
+      pendingCount: 0,
+      processing: null,
       source: x.source,
       href: healthHref("vaccination"),
     })),

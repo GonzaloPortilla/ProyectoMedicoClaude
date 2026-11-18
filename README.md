@@ -14,7 +14,7 @@
 
 ## Qué hace
 
-- **Paciente**: guarda su información de salud (alergias, medicación, antecedentes, cirugías, vacunas…), sube estudios en PDF o en imagen, ve su historial cronológico, busca en su información, prepara su ficha de emergencia, comparte su información con médicos de forma granular y temporal, y ve quién accedió a qué.
+- **Paciente**: guarda su información de salud (alergias, medicación, antecedentes, cirugías, vacunas…), sube estudios en PDF o en imagen —la app **lee el documento** (también fotos y PDF escaneados, con OCR local), propone sus datos y detecta resultados de laboratorio para que los revise—, sigue la **evolución** de sus resultados en el tiempo, ve su historial cronológico, busca en su información, prepara su ficha de emergencia, comparte su información con médicos de forma granular y temporal, y ve quién accedió a qué.
 - **Médico** (con matrícula verificada): solicita acceso con un código que le da el paciente, ve **sólo** lo autorizado mientras el acceso esté vigente y crea informes firmados que nunca se reemplazan en silencio.
 - **Administrador**: gestiona cuentas y verifica matrículas, **sin** acceso a información médica.
 
@@ -102,6 +102,9 @@ Abrí http://localhost:3000. Si el puerto está ocupado (por ejemplo, por Postgr
 | `S3_BUCKET`, `S3_REGION`, `S3_ENDPOINT`, `S3_FORCE_PATH_STYLE`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | Con `s3` | Object storage compatible con S3 (bucket **privado**). |
 | `MAIL_TRANSPORT` | No | `console` imprime los emails en la consola (desarrollo). En producción hay que conectar un proveedor real. |
 | `SEED_DEMO_PASSWORD` | Para el seed | Contraseña de las cuentas demo. |
+| `DOCUMENT_EXTRACTION` | No | `local` (por defecto) o `disabled`. Análisis automático de estudios. |
+| `OCR_PROVIDER` | No | `tesseract` (por defecto, OCR local en español, sin red) o `none`. |
+| `OCR_MAX_PAGES` | No | Páginas de un PDF escaneado que se leen con OCR (por defecto 3). |
 
 ## Cuentas demo
 
@@ -109,7 +112,7 @@ Todas usan la contraseña de `SEED_DEMO_PASSWORD` (en `.env.example`: `Demo1234!
 
 | Rol | Nombre | Email | Situación inicial |
 | --- | --- | --- | --- |
-| Paciente | Martín Demo | `martin@demo.local` | Historia completa: alergias, medicación, antecedentes, vacunas, 8 estudios (4 con archivo). Ningún médico con acceso; un acceso anterior ya vencido. |
+| Paciente | Martín Demo | `martin@demo.local` | Historia completa: alergias, medicación, antecedentes, vacunas, 11 estudios (análisis de laboratorio de 2023 a 2026 ya leídos y confirmados para **Evolución**, y un perfil lipídico **por revisar**). Ningún médico con acceso; un acceso anterior ya vencido. |
 | Paciente | Carla Demo | `carla@demo.local` | Algunos estudios; ya autorizó al Dr. Pérez (Cardiología). |
 | Médico | Dr. Juan Pérez · Cardiología | `juan.perez@demo.local` | Verificado; atiende a Carla. |
 | Médica | Dra. Sofía Ramos · Clínica médica | `sofia.ramos@demo.local` | Verificada; tuvo acceso a Martín (vencido). |
@@ -124,13 +127,17 @@ npm run demo:reset
 
 El guion completo de demostración está en [docs/DEMO.md](docs/DEMO.md).
 
+### Archivos de ejemplo para la carga inteligente
+
+`docs/samples/` trae tres estudios ficticios: un PDF con texto (`laboratorio_noviembre.pdf`), una foto (`laboratorio_foto.jpg`) y un PDF escaneado (`laboratorio_escaneado.pdf`). Se regeneran con `npm run demo:samples`.
+
 ## Tests
 
 ```bash
 npm test
 ```
 
-Ejecuta 150+ tests unitarios y de integración contra la base de `TEST_DATABASE_URL`: aislamiento entre pacientes, los casos de seguridad del acceso médico (sin autorización, otro paciente, categoría no permitida, vencido, revocado, ids manipulados), fuerza bruta, MFA, auditoría inmutable, archivos y más.
+Ejecuta 220 tests unitarios y de integración contra la base de `TEST_DATABASE_URL`: aislamiento entre pacientes, los casos de seguridad del acceso médico (sin autorización, otro paciente, categoría no permitida, vencido, revocado, ids manipulados), fuerza bruta, MFA, auditoría inmutable, archivos, extracción y OCR, documento original inmutable, permisos sobre mediciones, duplicados y más.
 
 Otros controles:
 
@@ -174,6 +181,7 @@ En producción, configurá `APP_SECRET`, un proveedor de email, el storage S3 y 
 | `npm run db:studio` | Prisma Studio |
 | `npm run audit:verify` | Verifica la cadena de hashes de la auditoría |
 | `npm run jobs:expire-access` | Marca y registra los accesos vencidos (para programar con cron) |
+| `npm run demo:samples` | Genera los estudios de ejemplo de `docs/samples/` |
 
 ## Problemas frecuentes
 
@@ -186,8 +194,10 @@ En producción, configurá `APP_SECRET`, un proveedor de email, el storage S3 y 
 | "Tenés que verificar tu email" | En desarrollo, el enlace de activación aparece en la consola de `npm run dev`. Las cuentas demo ya están verificadas. |
 | "Demasiados intentos" | La cuenta se bloquea 15 minutos tras 5 intentos fallidos. Esperá o corré `npm run demo:reset`. |
 | La página se ve sin estilos | Borrá la carpeta `.next` y volvé a correr `npm run dev`. |
+| Un estudio queda "Analizando…" mucho tiempo | Si el servidor se reinició durante el análisis, abrí el estudio y tocá *Reintentar análisis*. El archivo original no se pierde. |
+| "No pudimos leer el contenido automáticamente" | El documento no tiene texto legible (foto muy borrosa, manuscrito). El estudio queda guardado igual; completá sus datos a mano. |
 | Errores de archivos bloqueados en Windows | Evitá carpetas sincronizadas por OneDrive (por ejemplo, usá `C:\dev\`). |
 
 ## Stack
 
-Next.js 16 (App Router, Server Components, Server Actions) · React 19 · TypeScript · Tailwind CSS 4 · PostgreSQL · Prisma 7 · Zod 4 · Argon2id · Vitest · Playwright (pruebas manuales end-to-end). Los detalles están en [ARCHITECTURE.md](ARCHITECTURE.md).
+Next.js 16 (App Router, Server Components, Server Actions) · React 19 · TypeScript · Tailwind CSS 4 · PostgreSQL · Prisma 7 · Zod 4 · Argon2id · pdf.js (`unpdf`) · Tesseract.js (OCR local) · Vitest · Playwright (pruebas manuales end-to-end). Los detalles están en [ARCHITECTURE.md](ARCHITECTURE.md).

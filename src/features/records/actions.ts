@@ -9,6 +9,10 @@ import { authorizePatient } from "@/server/patient/context";
 import { createRecord, deleteRecord } from "@/server/medical/records";
 import { MAX_FILE_BYTES } from "@/server/files/validation";
 import { requestContext } from "@/server/audit/request";
+import { after } from "next/server";
+import { createHash } from "node:crypto";
+import { findDuplicateFile } from "@/server/documents/duplicates";
+import { processDocumentSafely } from "@/server/documents/process";
 
 const FORBIDDEN: FormState = { status: "error", message: "No tenés permiso para realizar esta acción." };
 
@@ -28,12 +32,20 @@ export const createRecordAction = withFormErrors("createRecordAction", async (_p
   if (file instanceof File && file.size > 0) {
     if (file.size > MAX_FILE_BYTES) return { status: "error", fieldErrors: { file: ["El archivo supera el máximo de 15 MB."] }, values };
     upload = { name: file.name, size: file.size, bytes: new Uint8Array(await file.arrayBuffer()) };
+    // Respaldo del aviso del navegador: nunca se carga dos veces el mismo archivo sin confirmarlo.
+    if (formData.get("allowDuplicate") !== "1") {
+      const dup = await findDuplicateFile(ctx.patientId, createHash("sha256").update(upload.bytes).digest("hex"));
+      if (dup) return { status: "error", values, fieldErrors: { file: [`Este archivo parece estar cargado anteriormente («${dup.title}»). Elegilo de nuevo y tocá «Cargar igualmente» si querés guardarlo otra vez.`] } };
+    }
   }
 
-  const result = await createRecord(ctx.patientId, { userId: ctx.user.id, source: "PATIENT" }, parsed.data, upload, await requestContext());
+  // Los datos ya los completó el paciente: el análisis sólo busca resultados.
+  const result = await createRecord(ctx.patientId, { userId: ctx.user.id, source: "PATIENT" }, parsed.data, upload, await requestContext(), { analyze: true, metadataReviewed: true });
   if (!result.ok) {
     return { status: "error", values, ...(result.field ? { fieldErrors: { [result.field]: [result.error] } } : { message: result.error }) };
   }
+  const fileId = result.data.fileId;
+  if (fileId) after(() => processDocumentSafely(fileId));
   revalidatePath("/patient", "layout");
   redirect(`/patient/documents/${result.data.recordId}?created=1`);
 });

@@ -1,35 +1,77 @@
 "use client";
 
-import { FileText, ImageIcon, UploadCloud, X } from "lucide-react";
+import Link from "next/link";
+import { Copy, FileText, ImageIcon, UploadCloud, X } from "lucide-react";
 import { useRef, useState } from "react";
-import { cn } from "@/lib/utils";
+import { cn, formatDate } from "@/lib/utils";
 import { formatBytes } from "@/lib/text";
+import { buttonClasses } from "@/components/ui/button";
+import { checkDuplicateAction, type DuplicateCheck } from "@/features/documents/actions";
 
 const MAX = 15 * 1024 * 1024;
 const ACCEPT = ".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png";
 
-/** Selector de archivo con arrastrar y soltar. La validación definitiva ocurre en el servidor. */
-export function FileDropzone({ error, onPick }: { error?: string[]; onPick?: (name: string | null) => void }) {
+type Duplicate = NonNullable<DuplicateCheck["duplicate"]>;
+
+/** SHA-256 en el navegador (sólo en contextos seguros: https o localhost). */
+async function sha256Hex(f: File): Promise<string | null> {
+  try {
+    if (!globalThis.crypto?.subtle) return null;
+    const digest = await crypto.subtle.digest("SHA-256", await f.arrayBuffer());
+    return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Selector de archivo con arrastrar y soltar. La validación definitiva ocurre en el servidor.
+ * Antes de subir, compara el hash con los archivos del paciente y avisa si ya lo cargó.
+ * `onBlockedChange(true)` mientras hay una decisión pendiente (el formulario no se envía).
+ */
+export function FileDropzone({ error, onPick, onBlockedChange }: { error?: string[]; onPick?: (name: string | null) => void; onBlockedChange?: (blocked: boolean) => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [localError, setLocalError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [duplicate, setDuplicate] = useState<Duplicate | null>(null);
+  const [allowDuplicate, setAllowDuplicate] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const pickId = useRef(0);
 
   function accept(f: File | null) {
     setLocalError(null);
+    setDuplicate(null);
+    setAllowDuplicate(false);
+    onBlockedChange?.(false);
+    const id = ++pickId.current;
     if (!f) {
       setFile(null);
       onPick?.(null);
       return;
     }
     const ext = f.name.split(".").pop()?.toLowerCase();
+    let valid = true;
     if (!["pdf", "jpg", "jpeg", "png"].includes(ext ?? "")) {
       setLocalError("Formato no permitido. Subí un PDF, JPG o PNG.");
+      valid = false;
     } else if (f.size > MAX) {
       setLocalError("El archivo supera el máximo de 15 MB.");
+      valid = false;
     }
     setFile(f);
     onPick?.(f.name);
+    if (!valid) return;
+    setChecking(true);
+    onBlockedChange?.(true);
+    void (async () => {
+      const hash = await sha256Hex(f);
+      const result = hash ? await checkDuplicateAction(hash).catch(() => ({ duplicate: null })) : { duplicate: null };
+      if (id !== pickId.current) return; // el usuario ya eligió otro archivo
+      setChecking(false);
+      setDuplicate(result.duplicate);
+      onBlockedChange?.(!!result.duplicate);
+    })();
   }
 
   function clear() {
@@ -73,6 +115,7 @@ export function FileDropzone({ error, onPick }: { error?: string[]; onPick?: (na
         <span className="mt-1 text-[13px] text-muted">PDF, JPG o PNG · hasta 15 MB</span>
       </label>
       <input ref={inputRef} id="file" name="file" type="file" accept={ACCEPT} className="sr-only" onChange={(e) => accept(e.target.files?.[0] ?? null)} />
+      {allowDuplicate ? <input type="hidden" name="allowDuplicate" value="1" /> : null}
 
       {file ? (
         <div className={cn("flex items-center gap-3 rounded-2xl border bg-surface p-3 shadow-card", message ? "border-red-300" : "border-line")}>
@@ -89,6 +132,40 @@ export function FileDropzone({ error, onPick }: { error?: string[]; onPick?: (na
         </div>
       ) : null}
       {message ? <p className="text-[13px] text-red-600">{message}</p> : null}
+      {checking ? (
+        <p className="text-[13px] text-muted" role="status">
+          Revisando si ya lo cargaste…
+        </p>
+      ) : null}
+      {duplicate && !allowDuplicate ? (
+        <div role="alert" className="rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200/70 ring-inset">
+          <p className="flex items-center gap-2 text-sm font-medium text-amber-900">
+            <Copy className="size-4" aria-hidden /> Este archivo parece estar cargado anteriormente.
+          </p>
+          <p className="mt-1 text-[13px] text-amber-900/80">
+            «{duplicate.title}» · {formatDate(new Date(`${duplicate.occurredOn}T00:00:00Z`))}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Link href={`/patient/documents/${duplicate.recordId}`} className={buttonClasses({ variant: "secondary", size: "sm" })}>
+              Ver existente
+            </Link>
+            <button
+              type="button"
+              className={buttonClasses({ variant: "ghost", size: "sm" })}
+              onClick={() => {
+                setAllowDuplicate(true);
+                onBlockedChange?.(false);
+              }}
+            >
+              Cargar igualmente
+            </button>
+            <button type="button" className={buttonClasses({ variant: "ghost", size: "sm" })} onClick={clear}>
+              Cancelar
+            </button>
+          </div>
+        </div>
+      ) : null}
+      {duplicate && allowDuplicate ? <p className="text-[13px] text-muted">Se va a guardar como un estudio nuevo. No se borra nada.</p> : null}
     </div>
   );
 }

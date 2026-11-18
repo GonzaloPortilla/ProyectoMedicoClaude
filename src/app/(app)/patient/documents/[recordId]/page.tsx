@@ -1,17 +1,21 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronRight, Download, ExternalLink, FileText } from "lucide-react";
+import { ChevronRight, Download, ExternalLink, FileText, LineChart, ScanText, Sparkles } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { buttonClasses } from "@/components/ui/button";
+import { Button, ButtonLink, buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { SourceBadge } from "@/components/status/source-badge";
 import { CategoryIcon } from "@/features/records/components/category-icon";
 import { DeleteRecordButton } from "@/features/records/components/delete-record-button";
 import { ReportView } from "@/features/access/components/report-view";
 import { getRecord } from "@/server/medical/records";
+import { getReviewData } from "@/server/documents/review";
+import { analyzeRecordAction } from "@/features/documents/actions";
+import { MeasurementList } from "@/features/documents/components/measurement-list";
+import { loadConcepts } from "@/server/documents/concepts-store";
 import { requirePatient } from "@/server/patient/context";
 import { signedFileUrl } from "@/server/files/urls";
 import { formatBytes } from "@/lib/text";
@@ -31,6 +35,14 @@ export default async function RecordDetailPage({
   // Filtra por el patientId de la sesión: el registro de otro paciente responde 404.
   const record = await getRecord(patientId, recordId);
   if (!record) notFound();
+  const [analysis, concepts] = await Promise.all([getReviewData(patientId, record.id), loadConcepts()]);
+  const extraction = analysis?.extraction ?? null;
+  const measurements = (analysis?.record.measurements ?? []).filter((m) => m.reviewStatus !== "DISCARDED");
+  const pending = measurements.filter((m) => m.reviewStatus === "PENDING").length;
+  const confirmed = measurements.filter((m) => m.reviewStatus === "CONFIRMED");
+  const ownUpload = record.source === "PATIENT" && !record.report;
+  const status = extraction?.status ?? null;
+  const reviewHref = `/patient/documents/${record.id}/review`;
 
   const details = [
     ["Fecha", formatDate(record.occurredOn)],
@@ -56,8 +68,30 @@ export default async function RecordDetailPage({
       />
       {created === "1" ? (
         <Alert tone="success" className="mb-5">
-          Guardado. Ya forma parte de tu historial.
+          Guardado. Ya forma parte de tu historial.{status === "UPLOADED" || status === "PROCESSING" ? " Estamos leyendo el documento para buscar resultados." : ""}
         </Alert>
+      ) : null}
+
+      {status === "UPLOADED" || status === "PROCESSING" ? (
+        <div className="mb-5 flex flex-col gap-3 rounded-2xl bg-sky-50 p-4 text-sm text-sky-900 ring-1 ring-sky-200/70 ring-inset sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex items-center gap-2">
+            <ScanText className="size-4 shrink-0" aria-hidden /> Analizando el documento…
+          </p>
+          <ButtonLink href={reviewHref} size="sm" variant="secondary">
+            Ver el progreso
+          </ButtonLink>
+        </div>
+      ) : status === "READY_FOR_REVIEW" && ownUpload ? (
+        <div className="mb-5 flex flex-col gap-3 rounded-2xl bg-amber-50 p-4 text-sm text-amber-900 ring-1 ring-amber-200/70 ring-inset sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex items-center gap-2">
+            <Sparkles className="size-4 shrink-0" aria-hidden />
+            {extraction && !extraction.metadataReviewed ? "Detectamos los datos de este estudio" : "Hay resultados detectados"}
+            {pending ? ` y ${pending === 1 ? "1 resultado" : `${pending} resultados`} para revisar` : ""}.
+          </p>
+          <ButtonLink href={reviewHref} size="sm">
+            Revisar
+          </ButtonLink>
+        </div>
       ) : null}
 
       {record.report ? (
@@ -149,6 +183,44 @@ export default async function RecordDetailPage({
           </CardBody>
         </Card>
       </div>
+
+      {measurements.length ? (
+        <Card id="resultados" className="mt-5 scroll-mt-24">
+          <CardHeader
+            title={`Resultados (${measurements.length})`}
+            description={confirmed.length ? `${confirmed.length} confirmados${pending ? ` · ${pending} sin confirmar` : ""}. Cada dato muestra de dónde salió.` : "Todavía no confirmaste estos resultados."}
+            action={
+              <div className="flex flex-wrap gap-2">
+                {pending && ownUpload ? (
+                  <ButtonLink href={reviewHref} size="sm">
+                    Revisar
+                  </ButtonLink>
+                ) : null}
+                {confirmed.length ? (
+                  <ButtonLink href={`/patient/evolution?i=${encodeURIComponent(confirmed[0]!.normalizedKey)}`} size="sm" variant="secondary">
+                    <LineChart className="size-3.5" /> Evolución
+                  </ButtonLink>
+                ) : null}
+              </div>
+            }
+          />
+          <CardBody>
+            <MeasurementList recordId={record.id} measurements={measurements} source={{ title: record.title, institution: record.institution?.name ?? null, date: record.occurredOn }} concepts={concepts} editable={false} back="record" />
+          </CardBody>
+        </Card>
+      ) : null}
+
+      {ownUpload && record.files.length && (!extraction || status === "FAILED") ? (
+        <div className="mt-5 flex flex-col gap-3 rounded-2xl border border-dashed border-line-strong p-4 text-sm text-muted sm:flex-row sm:items-center sm:justify-between">
+          <p>{status === "FAILED" ? "No pudimos leer este documento automáticamente. El archivo original está intacto." : "¿Querés que leamos este documento para buscar resultados de laboratorio?"}</p>
+          <form action={analyzeRecordAction}>
+            <input type="hidden" name="recordId" value={record.id} />
+            <Button type="submit" size="sm" variant="secondary">
+              <ScanText className="size-3.5" /> {status === "FAILED" ? "Reintentar análisis" : "Analizar documento"}
+            </Button>
+          </form>
+        </div>
+      ) : null}
     </>
   );
 }

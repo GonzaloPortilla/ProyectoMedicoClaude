@@ -76,15 +76,18 @@ model User {
   verificationReviews DoctorVerification[] @relation("VerificationReviewer")
 
   // Autoría de información médica (Fase 2)
-  createdRecords      MedicalRecord[]   @relation("RecordCreatedBy")
-  uploadedFiles       MedicalFile[]     @relation("FileUploadedBy")
-  createdAllergies    Allergy[]         @relation("AllergyCreatedBy")
-  createdConditions   Condition[]       @relation("ConditionCreatedBy")
-  createdMedications  Medication[]      @relation("MedicationCreatedBy")
-  createdSurgeries    Surgery[]         @relation("SurgeryCreatedBy")
-  createdHospitals    Hospitalization[] @relation("HospitalizationCreatedBy")
-  createdVaccinations Vaccination[]     @relation("VaccinationCreatedBy")
-  createdFamilyItems  FamilyHistory[]   @relation("FamilyHistoryCreatedBy")
+  createdRecords        MedicalRecord[]      @relation("RecordCreatedBy")
+  uploadedFiles         MedicalFile[]        @relation("FileUploadedBy")
+  reviewedExtractions   DocumentExtraction[] @relation("ExtractionReviewedBy")
+  confirmedMeasurements MedicalMeasurement[] @relation("MeasurementConfirmedBy")
+  verifiedMeasurements  MedicalMeasurement[] @relation("MeasurementVerifiedBy")
+  createdAllergies      Allergy[]            @relation("AllergyCreatedBy")
+  createdConditions     Condition[]          @relation("ConditionCreatedBy")
+  createdMedications    Medication[]         @relation("MedicationCreatedBy")
+  createdSurgeries      Surgery[]            @relation("SurgeryCreatedBy")
+  createdHospitals      Hospitalization[]    @relation("HospitalizationCreatedBy")
+  createdVaccinations   Vaccination[]        @relation("VaccinationCreatedBy")
+  createdFamilyItems    FamilyHistory[]      @relation("FamilyHistoryCreatedBy")
 
   // Acceso médico (Fase 3)
   accessRequests          AccessRequest[]          @relation("DoctorRequests")
@@ -143,6 +146,8 @@ model PatientProfile {
   institutions      Institution[]
   records           MedicalRecord[]
   files             MedicalFile[]
+  extractions       DocumentExtraction[]
+  measurements      MedicalMeasurement[]
 
   // Acceso médico (Fase 3)
   linkCodes      PatientLinkCode[]
@@ -296,10 +301,11 @@ model Institution {
   normalizedName String
   createdAt      DateTime @default(now())
 
-  patient          PatientProfile    @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patient          PatientProfile       @relation(fields: [patientId], references: [id], onDelete: Cascade)
   records          MedicalRecord[]
   surgeries        Surgery[]
   hospitalizations Hospitalization[]
+  measurements     MedicalMeasurement[]
 
   @@unique([patientId, normalizedName])
   @@map("institutions")
@@ -509,13 +515,15 @@ model MedicalRecord {
   createdAt        DateTime   @default(now())
   updatedAt        DateTime   @updatedAt
 
-  patient     PatientProfile  @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  category    MedicalCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
-  institution Institution?    @relation(fields: [institutionId], references: [id], onDelete: SetNull)
-  createdBy   User?           @relation("RecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
-  files       MedicalFile[]
+  patient      PatientProfile       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  category     MedicalCategory      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  institution  Institution?         @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  createdBy    User?                @relation("RecordCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  files        MedicalFile[]
   /// Presente cuando el registro es un informe médico versionado.
-  report      MedicalReport?
+  report       MedicalReport?
+  extractions  DocumentExtraction[]
+  measurements MedicalMeasurement[]
 
   @@index([patientId, occurredOn])
   @@index([patientId, categoryId])
@@ -524,25 +532,32 @@ model MedicalRecord {
 
 /// Metadatos de un archivo privado. Los bytes viven en el storage (local o S3) bajo storageKey.
 model MedicalFile {
-  id           String   @id @default(cuid())
+  id             String   @id @default(cuid())
   /// Denormalizado desde el registro para validar propiedad sin joins.
-  patientId    String
-  recordId     String
+  patientId      String
+  recordId       String
   /// Clave aleatoria en el storage. Nunca contiene datos del paciente ni el nombre original.
-  storageKey   String   @unique
-  originalName String
-  mimeType     String
-  sizeBytes    Int
-  sha256       String
-  uploadedById String?
-  createdAt    DateTime @default(now())
+  storageKey     String   @unique
+  originalName   String
+  mimeType       String
+  sizeBytes      Int
+  /// SHA-256 de lo almacenado (después de quitar metadatos EXIF/GPS de las imágenes).
+  sha256         String
+  /// SHA-256 de los bytes tal como los subió el usuario. Detecta archivos ya cargados.
+  originalSha256 String?
+  uploadedById   String?
+  createdAt      DateTime @default(now())
 
-  patient    PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  record     MedicalRecord  @relation(fields: [recordId], references: [id], onDelete: Cascade)
-  uploadedBy User?          @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  patient      PatientProfile       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  record       MedicalRecord        @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  uploadedBy   User?                @relation("FileUploadedBy", fields: [uploadedById], references: [id], onDelete: SetNull)
+  extraction   DocumentExtraction?
+  measurements MedicalMeasurement[]
 
   @@index([patientId])
   @@index([recordId])
+  @@index([patientId, originalSha256])
+  @@index([patientId, sha256])
   @@map("medical_files")
 }
 
@@ -752,6 +767,11 @@ enum AuditAction {
   PATIENT_SUMMARY_VIEWED
   REPORT_CREATED
   REPORT_CORRECTED
+  // Procesamiento de estudios (Fase 6)
+  DOCUMENT_PROCESSED
+  DOCUMENT_REVIEWED
+  MEASUREMENTS_REVIEWED
+  MEASUREMENTS_VIEWED
   // Administración
   DOCTOR_VERIFICATION_DECIDED
 }
@@ -834,4 +854,150 @@ model MfaRecoveryCode {
 
   @@index([userId])
   @@map("mfa_recovery_codes")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FASE 6 — Procesamiento de estudios y mediciones longitudinales
+//
+// El archivo original (MedicalFile + storage) es la fuente primaria y NUNCA se modifica
+// (trigger medical_files_immutable). Todo lo que se extrae vive aparte y es revisable.
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum DocumentProcessingStatus {
+  UPLOADED
+  PROCESSING
+  READY_FOR_REVIEW
+  CONFIRMED
+  FAILED
+}
+
+enum ExtractionMethod {
+  /// Texto embebido en el PDF.
+  PDF_TEXT
+  /// Reconocimiento óptico de caracteres (foto o PDF escaneado).
+  OCR
+  /// Cargado o corregido a mano.
+  MANUAL
+}
+
+enum MeasurementReviewStatus {
+  PENDING
+  CONFIRMED
+  DISCARDED
+}
+
+/// Resultado del análisis automático de UN archivo. Nunca reemplaza al original.
+model DocumentExtraction {
+  id               String                   @id @default(cuid())
+  patientId        String
+  recordId         String
+  fileId           String                   @unique
+  status           DocumentProcessingStatus @default(UPLOADED)
+  method           ExtractionMethod?
+  /// Proveedor y versión que produjo el texto (p. ej. "unpdf", "tesseract.js/spa").
+  provider         String?
+  /// Texto extraído (para búsqueda y revisión). El documento original sigue siendo la fuente.
+  text             String?
+  pageCount        Int?
+  /// Confianza media del OCR (0–100), si se usó.
+  ocrConfidence    Float?
+  /// Metadatos propuestos (título, fecha, tipo, institución…) con su confianza. Ver DocumentSuggestions.
+  suggestions      Json?
+  /// true si el paciente ya completó o confirmó los datos del estudio.
+  metadataReviewed Boolean                  @default(false)
+  /// Código de error interno (sin datos del paciente) si status = FAILED.
+  errorCode        String?
+  attempts         Int                      @default(0)
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  reviewedAt       DateTime?
+  reviewedById     String?
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+
+  patient      PatientProfile       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  record       MedicalRecord        @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  file         MedicalFile          @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  reviewedBy   User?                @relation("ExtractionReviewedBy", fields: [reviewedById], references: [id], onDelete: SetNull)
+  measurements MedicalMeasurement[]
+
+  @@index([patientId, status])
+  @@index([recordId])
+  @@map("document_extractions")
+}
+
+/// Catálogo de conceptos normalizados (glucemia, colesterol HDL…). Extensible y preparado
+/// para mapearse a LOINC / SNOMED CT (códigos vacíos hasta validarlos).
+model MeasurementConcept {
+  id          String   @id @default(cuid())
+  /// Clave estable interna (p. ej. "glucose").
+  code        String   @unique
+  displayName String
+  /// Sinónimos normalizados (minúsculas, sin acentos): "glucemia", "glucosa", "glucose".
+  aliases     String[] @default([])
+  defaultUnit String?
+  loincCode   String?
+  snomedCode  String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  measurements MedicalMeasurement[]
+
+  @@map("measurement_concepts")
+}
+
+/// Un valor medido (p. ej. Glucemia 92 mg/dL) con su procedencia completa.
+model MedicalMeasurement {
+  id               String                  @id @default(cuid())
+  patientId        String
+  /// Documento (registro) del que proviene. Define la categoría y, por lo tanto, quién puede verlo.
+  recordId         String
+  fileId           String?
+  extractionId     String?
+  conceptId        String?
+  /// Nombre tal como figura en el documento. Nunca se modifica.
+  originalName     String
+  /// Clave de agrupación: código del concepto o, si no se reconoce, el nombre normalizado.
+  normalizedKey    String
+  /// Valor tal como figura ("14,8", "<0,5", "Negativo").
+  valueText        String
+  valueNumeric     Decimal?                @db.Decimal(18, 6)
+  unit             String?
+  refLow           Decimal?                @db.Decimal(18, 6)
+  refHigh          Decimal?                @db.Decimal(18, 6)
+  /// Referencia textual original ("70 - 100 mg/dL", "< 200").
+  refText          String?
+  /// Indicador de fuera de rango impreso en el documento ("H", "*", "Alto"…), si lo hay.
+  documentFlag     String?
+  measuredOn       DateTime                @db.Date
+  institutionId    String?
+  extractionMethod ExtractionMethod
+  /// 0–1. Estimación de qué tan segura es la extracción automática.
+  confidence       Float?
+  reviewStatus     MeasurementReviewStatus @default(PENDING)
+  /// Valores detectados originalmente, para mostrar qué se corrigió.
+  detected         Json?
+  editedAt         DateTime?
+  confirmedById    String?
+  confirmedAt      DateTime?
+  /// Verificación opcional por un profesional (preparado para fases futuras).
+  verifiedById     String?
+  verifiedAt       DateTime?
+  source           DataSource              @default(SYSTEM)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  patient     PatientProfile      @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  record      MedicalRecord       @relation(fields: [recordId], references: [id], onDelete: Cascade)
+  file        MedicalFile?        @relation(fields: [fileId], references: [id], onDelete: SetNull)
+  extraction  DocumentExtraction? @relation(fields: [extractionId], references: [id], onDelete: SetNull)
+  concept     MeasurementConcept? @relation(fields: [conceptId], references: [id], onDelete: SetNull)
+  institution Institution?        @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  confirmedBy User?               @relation("MeasurementConfirmedBy", fields: [confirmedById], references: [id], onDelete: SetNull)
+  verifiedBy  User?               @relation("MeasurementVerifiedBy", fields: [verifiedById], references: [id], onDelete: SetNull)
+
+  @@index([patientId, normalizedKey, measuredOn])
+  @@index([patientId, reviewStatus])
+  @@index([recordId])
+  @@map("medical_measurements")
 }

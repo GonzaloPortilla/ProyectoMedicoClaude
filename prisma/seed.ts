@@ -20,6 +20,9 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { crc32, deflateSync } from "node:zlib";
+import { makePdf } from "./demo-documents";
+import { UnpdfReader } from "../src/server/documents/extraction/pdf-unpdf";
+import { analyzeDocumentText } from "../src/server/documents/analysis/analyze";
 
 if (process.env.NODE_ENV === "production") {
   console.error("Los datos de demostración no deben cargarse en producción.");
@@ -42,49 +45,6 @@ const at = (iso: string, hhmm = "10:00") => new Date(`${iso}T${hhmm}:00.000-03:0
 
 function normalize(v: string) {
   return v.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
-}
-
-/** PDF de una página con encabezado, datos del paciente y una tabla de resultados. */
-function makePdf(title: string, subtitle: string, rows: [string, string, string][], footer: string): Buffer {
-  const esc = (s: string) => s.replace(/[()\\]/g, "");
-  const ops: string[] = [];
-  const text = (x: number, y: number, size: number, font: "F1" | "F2", s: string) => ops.push(`BT /${font} ${size} Tf ${x} ${y} Td (${esc(s)}) Tj ET`);
-  ops.push("0.05 0.5 0.44 rg 0 792 595 50 re f"); // franja superior
-  text(50, 810, 16, "F2", "Laboratorio / Centro de diagnostico - DEMO");
-  text(50, 760, 18, "F2", title);
-  text(50, 740, 10, "F1", subtitle);
-  text(50, 724, 10, "F1", "Paciente: Martin Demo  -  DNI 00.000.000 (dato ficticio)");
-  ops.push("0.85 0.87 0.9 RG 50 712 m 545 712 l S");
-  text(50, 692, 10, "F2", "Determinacion");
-  text(300, 692, 10, "F2", "Resultado");
-  text(420, 692, 10, "F2", "Valor de referencia");
-  rows.forEach(([name, value, ref], i) => {
-    const y = 670 - i * 20;
-    text(50, y, 10, "F1", name);
-    text(300, y, 10, "F2", value);
-    text(420, y, 10, "F1", ref);
-  });
-  text(50, 670 - rows.length * 20 - 24, 9, "F1", footer);
-  text(50, 60, 8, "F1", "Documento de demostracion generado automaticamente. No contiene informacion medica real.");
-  const content = ops.join("\n");
-  const objects = [
-    "<< /Type /Catalog /Pages 2 0 R >>",
-    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
-    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>",
-    `<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`,
-  ];
-  let out = "%PDF-1.4\n";
-  const offsets: number[] = [];
-  objects.forEach((o, i) => {
-    offsets.push(Buffer.byteLength(out, "latin1"));
-    out += `${i + 1} 0 obj\n${o}\nendobj\n`;
-  });
-  const xref = Buffer.byteLength(out, "latin1");
-  out += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((o) => `${String(o).padStart(10, "0")} 00000 n \n`).join("")}`;
-  out += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
-  return Buffer.from(out, "latin1");
 }
 
 function encodePng(width: number, height: number, rgb: Uint8Array): Buffer {
@@ -187,7 +147,70 @@ type DemoRecord = {
   description?: string;
   tags?: string[];
   file?: { name: string; body: Buffer; mime: "application/pdf" | "image/png" };
+  /** Fase 6: analizar el PDF con el mismo pipeline de la app y dejar los resultados confirmados o por revisar. */
+  analysis?: "confirmed" | "review";
 };
+
+let conceptCache: { id: string; code: string; displayName: string; aliases: string[] }[] | null = null;
+
+/** Extrae el texto del PDF demo, detecta resultados y los guarda como lo haría la app. */
+async function analyzeDemoRecord(userId: string, patientId: string, recordId: string, fileId: string, r: DemoRecord, institutionId: string | null) {
+  conceptCache ??= await db.measurementConcept.findMany({ where: { isActive: true }, select: { id: true, code: true, displayName: true, aliases: true } });
+  const categories = (await db.medicalCategory.findMany({ select: { slug: true } })).map((c) => c.slug);
+  const reader = new UnpdfReader();
+  const { text, pageCount } = await reader.readText(new Uint8Array(r.file!.body));
+  const analysis = analyzeDocumentText({ text, filename: r.file!.name, categories, concepts: conceptCache, now: new Date() });
+  const confirmed = r.analysis === "confirmed";
+  const when = at(r.date, "19:00");
+  const extraction = await db.documentExtraction.create({
+    data: {
+      patientId,
+      recordId,
+      fileId,
+      status: confirmed ? "CONFIRMED" : "READY_FOR_REVIEW",
+      method: "PDF_TEXT",
+      provider: reader.name,
+      text,
+      pageCount,
+      suggestions: analysis.suggestions as unknown as Prisma.InputJsonValue,
+      metadataReviewed: true,
+      attempts: 1,
+      startedAt: when,
+      finishedAt: when,
+      reviewedAt: confirmed ? when : null,
+      reviewedById: confirmed ? userId : null,
+      createdAt: when,
+    },
+  });
+  await db.medicalMeasurement.createMany({
+    data: analysis.measurements.map((m) => ({
+      patientId,
+      recordId,
+      fileId,
+      extractionId: extraction.id,
+      conceptId: m.conceptId,
+      originalName: m.originalName,
+      normalizedKey: m.normalizedKey,
+      valueText: m.valueText,
+      valueNumeric: m.valueNumeric,
+      unit: m.unit,
+      refLow: m.refLow,
+      refHigh: m.refHigh,
+      refText: m.refText,
+      documentFlag: m.documentFlag,
+      measuredOn: d(r.date),
+      institutionId,
+      extractionMethod: "PDF_TEXT" as const,
+      confidence: m.confidence,
+      reviewStatus: confirmed ? ("CONFIRMED" as const) : ("PENDING" as const),
+      confirmedById: confirmed ? userId : null,
+      confirmedAt: confirmed ? when : null,
+      detected: { originalName: m.originalName, valueText: m.valueText, unit: m.unit, refText: m.refText, line: m.line },
+      createdAt: when,
+    })),
+  });
+  return analysis.measurements.length;
+}
 
 async function createDemoRecord(userId: string, patientId: string, r: DemoRecord) {
   const category = await db.medicalCategory.findUniqueOrThrow({ where: { slug: r.category } });
@@ -203,6 +226,7 @@ async function createDemoRecord(userId: string, patientId: string, r: DemoRecord
         mimeType: r.file.mime,
         sizeBytes: r.file.body.length,
         sha256: createHash("sha256").update(r.file.body).digest("hex"),
+        originalSha256: createHash("sha256").update(r.file.body).digest("hex"),
         uploadedById: userId,
       };
     }
@@ -224,7 +248,11 @@ async function createDemoRecord(userId: string, patientId: string, r: DemoRecord
       searchText: normalize([r.title, category.name, r.specialty, inst?.name, r.professional, r.description, ...(r.tags ?? []), file?.originalName].filter(Boolean).join(" ")),
       files: file ? { create: file } : undefined,
     },
+    include: { files: { select: { id: true } } },
   });
+  if (r.analysis && r.file?.mime === "application/pdf" && record.files[0]) {
+    await analyzeDemoRecord(userId, patientId, record.id, record.files[0].id, r, inst?.id ?? null);
+  }
   return { record, category };
 }
 
@@ -382,8 +410,12 @@ async function seedMartin(userId: string, sofiaId: string) {
           ["Creatinina", "0,9 mg/dL", "0,7 - 1,3 mg/dL"],
           ["Uremia", "31 mg/dL", "15 - 45 mg/dL"],
           ["TSH", "2,1 uUI/mL", "0,4 - 4,0 uUI/mL"],
-        ], "Valores dentro de los rangos de referencia. Valores ficticios para demostracion."),
+          ["Colesterol total", "183 mg/dL", "< 200 mg/dL"],
+          ["Colesterol HDL", "55 mg/dL", "> 40 mg/dL"],
+          ["Colesterol LDL", "109 mg/dL", "< 130 mg/dL"],
+        ], "Valores ficticios para demostracion."),
       },
+      analysis: "confirmed",
     },
     {
       title: "Electrocardiograma",
@@ -418,12 +450,73 @@ async function seedMartin(userId: string, sofiaId: string) {
           ["Colesterol LDL", "162 mg/dL", "< 130 mg/dL"],
           ["Colesterol HDL", "44 mg/dL", "> 40 mg/dL"],
           ["Trigliceridos", "160 mg/dL", "< 150 mg/dL"],
-        ], "LDL y colesterol total por encima del valor deseable. Valores ficticios para demostracion."),
+        ], "Valores ficticios para demostracion."),
       },
+      // Queda por revisar: la demo muestra la confirmación de resultados.
+      analysis: "review",
     },
     { title: "Receta: atorvastatina 20 mg", date: "2026-04-10", category: "recetas", specialty: "Clínica médica", professional: "Dra. Sofía Ramos", description: "Una vez por día, a la noche." },
     { title: "Radiografía de tórax", date: "2025-12-20", category: "diagnostico-por-imagenes", specialty: "Diagnóstico por imágenes", institution: "Centro de Imágenes (demo)", description: "Sin hallazgos patológicos.", file: { name: "rx-torax-2025-12-20.png", mime: "image/png", body: makeXrayPng() } },
     { title: "Ergometría", date: "2025-11-15", category: "cardiologia", specialty: "Cardiología", institution: "Hospital Central (demo)", description: "Prueba suficiente, sin signos de isquemia. Capacidad funcional conservada." },
+    {
+      title: "Análisis de control",
+      date: "2025-06-10",
+      category: "laboratorio",
+      specialty: "Clínica médica",
+      institution: lab,
+      professional: "Dra. Sofía Ramos",
+      file: {
+        name: "laboratorio-2025-06-10.pdf",
+        mime: "application/pdf",
+        body: makePdf("Analisis de control", "Fecha de extraccion: 10/06/2025  -  Protocolo N 0102-DEMO", [
+          ["Glucemia en ayunas", "101 mg/dL", "70 - 100 mg/dL"],
+          ["Colesterol total", "214 mg/dL", "< 200 mg/dL"],
+          ["Colesterol HDL", "46 mg/dL", "> 40 mg/dL"],
+          ["Colesterol LDL", "141 mg/dL", "< 130 mg/dL"],
+          ["Hemoglobina", "15,1 g/dL", "13,5 - 17,5 g/dL"],
+          ["Creatinina", "0,9 mg/dL", "0,7 - 1,3 mg/dL"],
+        ], "Valores ficticios para demostracion."),
+      },
+      analysis: "confirmed",
+    },
+    {
+      title: "Análisis de rutina",
+      date: "2024-10-02",
+      category: "laboratorio",
+      specialty: "Clínica médica",
+      institution: lab,
+      file: {
+        name: "laboratorio-2024-10-02.pdf",
+        mime: "application/pdf",
+        body: makePdf("Analisis de rutina", "Fecha de extraccion: 02/10/2024  -  Protocolo N 0087-DEMO", [
+          ["Glucemia", "94 mg/dL", "70 - 100 mg/dL"],
+          ["Colesterol total", "198 mg/dL", "< 200 mg/dL"],
+          ["Colesterol HDL", "49 mg/dL", "> 40 mg/dL"],
+          ["Colesterol LDL", "126 mg/dL", "< 130 mg/dL"],
+          ["Hemoglobina", "14,6 g/dL", "13,5 - 17,5 g/dL"],
+        ], "Valores ficticios para demostracion."),
+      },
+      analysis: "confirmed",
+    },
+    {
+      title: "Análisis de rutina",
+      date: "2023-09-14",
+      category: "laboratorio",
+      specialty: "Clínica médica",
+      institution: "Laboratorio Norte (demo)",
+      file: {
+        name: "laboratorio-2023-09-14.pdf",
+        mime: "application/pdf",
+        body: makePdf("Analisis de rutina", "Fecha de extraccion: 14/09/2023  -  Protocolo N 5521-DEMO", [
+          ["Glucosa", "88 mg/dL", "74 - 106 mg/dL"],
+          ["Colesterol total", "187 mg/dL", "< 200 mg/dL"],
+          ["Colesterol HDL", "52 mg/dL", "> 40 mg/dL"],
+          ["Colesterol LDL", "112 mg/dL", "< 130 mg/dL"],
+          ["Hemoglobina", "14,9 g/dL", "13,0 - 17,0 g/dL"],
+        ], "Valores ficticios para demostracion.", "Laboratorio Norte - DEMO"),
+      },
+      analysis: "confirmed",
+    },
     { title: "Consulta clínica", date: "2025-06-03", category: "clinica-medica", specialty: "Clínica médica", professional: "Dra. Sofía Ramos", description: "Chequeo general. Se solicita análisis de control." },
   ];
   const created = [];

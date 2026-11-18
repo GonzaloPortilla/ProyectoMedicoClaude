@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ChevronRight, Clock, EyeOff, FilePlus2, Paperclip } from "lucide-react";
+import { ChevronRight, Clock, EyeOff, FilePlus2, FlaskConical, LineChart, Paperclip } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
@@ -61,6 +61,8 @@ export default async function DoctorPatientPage({ params }: { params: Promise<{ 
   const shared = new Set(viewableSections(access));
   const notShared = HEALTH_SECTIONS.filter((s) => !shared.has(s.key)).map((s) => s.label);
   const canCreate = creatableCategories(access).length > 0;
+  // Sólo resultados confirmados de categorías autorizadas (el conteo ya viene filtrado).
+  const hasResults = timeline.some((t) => t.resultCount > 0);
   const g = overview.general;
 
   return (
@@ -76,11 +78,18 @@ export default async function DoctorPatientPage({ params }: { params: Promise<{ 
         }
         title={fullName(overview.name)}
         action={
-          canCreate ? (
-            <ButtonLink href={`/doctor/patients/${patientId}/reports/new`}>
-              <FilePlus2 className="size-4" /> Crear informe
-            </ButtonLink>
-          ) : undefined
+          <div className="flex flex-wrap gap-2">
+            {hasResults ? (
+              <ButtonLink href={`/doctor/patients/${patientId}/evolution`} variant="secondary">
+                <LineChart className="size-4" /> Evolución
+              </ButtonLink>
+            ) : null}
+            {canCreate ? (
+              <ButtonLink href={`/doctor/patients/${patientId}/reports/new`}>
+                <FilePlus2 className="size-4" /> Crear informe
+              </ButtonLink>
+            ) : null}
+          </div>
         }
       />
 
@@ -184,6 +193,12 @@ export default async function DoctorPatientPage({ params }: { params: Promise<{ 
                     <div className="flex shrink-0 flex-col items-end gap-1">
                       <span className="text-[13px] text-ink-soft tabular-nums">{formatDate(t.date)}</span>
                       <div className="flex items-center gap-1.5">
+                        {t.resultCount ? (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted">
+                            <FlaskConical className="size-3" /> {t.resultCount}
+                            <span className="sr-only"> resultados</span>
+                          </span>
+                        ) : null}
                         {t.fileCount ? (
                           <span className="inline-flex items-center gap-1 text-xs text-muted">
                             <Paperclip className="size-3" /> {t.fileCount}

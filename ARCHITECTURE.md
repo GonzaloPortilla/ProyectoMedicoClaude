@@ -55,6 +55,13 @@ src/
     files/                 validación, limpieza de metadatos, URLs firmadas, control de acceso, antivirus (hook)
     storage/               drivers local y S3
     crypto/                HKDF, HMAC, AES-256-GCM
+    documents/             Fase 6: procesamiento de estudios
+      extraction/          DocumentExtractionService (contrato) + proveedores locales: unpdf (texto/render de PDF), Tesseract (OCR)
+      analysis/            lógica pura: metadatos propuestos, resultados de laboratorio, números, conceptos normalizados
+      process.ts           pipeline UPLOADED → PROCESSING → READY_FOR_REVIEW / FAILED
+      review.ts            revisión del paciente (datos del estudio, confirmar / descartar / corregir resultados)
+      measurements.ts      lecturas de Evolución (paciente y médico, con filtro de permisos)
+      duplicates.ts        mismo archivo (hash) y posibles duplicados (fecha, institución, título)
     privacy/               exportación de datos
     patient/, doctor/      contexto de paciente / médico para páginas y acciones
   components/              UI compartida (botones, campos, tarjetas, diálogos, estados vacíos, navegación)
@@ -84,6 +91,34 @@ docs/DEMO.md               Guion de demostración
 5. `withFormErrors` convierte errores inesperados (por ejemplo, la base caída) en un mensaje amable.
 
 **Archivo** (`GET /api/files/[id]?exp&sig`): sesión, permiso (dueño o médico con VIEW sobre la categoría), firma HMAC atada a usuario y archivo vigente, y auditoría. Después se lee el storage y se responde con `no-store`, `nosniff` y CSP `default-src 'none'`.
+
+## Procesamiento de estudios (Fase 6)
+
+```
+Subida ─▶ validación + hash original ─▶ storage (write-once) ─▶ MedicalRecord + MedicalFile + DocumentExtraction(UPLOADED)
+                                                                   │  after(): segundo plano
+                                                                   ▼
+             verifica sha256 del storage ─▶ DocumentExtractionService.extract()
+                                              ├─ PDF con texto → unpdf (PDF_TEXT)
+                                              └─ foto / PDF escaneado → render + Tesseract (OCR)
+                                                                   ▼
+                     analyzeDocumentText(): metadatos propuestos + resultados de laboratorio + concepto normalizado
+                                                                   ▼
+                     DocumentExtraction(READY_FOR_REVIEW) + MedicalMeasurement(PENDING)   ── o FAILED (el estudio sigue igual)
+                                                                   ▼
+                     Revisión del paciente: confirma datos del estudio y cada resultado ─▶ CONFIRMED ─▶ Evolución
+```
+
+Decisiones:
+
+- **El original es la fuente primaria.** Nunca se reescribe: storage write-once, trigger `medical_files_immutable` y verificación del hash antes de analizar. Lo extraído vive en otras tablas.
+- **Proveedor reemplazable.** Todo depende de la interfaz `DocumentExtractionService` (`src/server/documents/extraction/types.ts`). La implementación por defecto es local (sin red: el modelo de OCR en español viene en un paquete npm), así que ningún documento sale del servidor. Se configura con `DOCUMENT_EXTRACTION`, `OCR_PROVIDER` y `OCR_MAX_PAGES`.
+- **Nada es definitivo sin revisión.** Las propuestas no modifican el registro hasta que el paciente confirma, y las mediciones nacen `PENDING`. Sólo las `CONFIRMED` aparecen en Evolución y las ven los médicos.
+- **Análisis puro y determinístico.** `src/server/documents/analysis/` no usa base ni red: se testea con texto y se reutiliza en el seed.
+- **Normalización con conservación.** Se guarda siempre el nombre original y, aparte, el concepto (`MeasurementConcept`, con sinónimos en la base y columnas LOINC/SNOMED listas para completar).
+- **Sin interpretación clínica.** Sólo se indica "Fuera del rango informado por el laboratorio" comparando con la referencia impresa.
+- **Mismos permisos.** Las mediciones heredan la categoría de su registro; las consultas del médico filtran por categorías con `VIEW` en la base de datos.
+- **Segundo plano sin colas.** El análisis corre con `after()` en el mismo proceso; un análisis interrumpido se puede reintentar (y uno "colgado" se retoma pasados 10 minutos).
 
 ## Autenticación y sesiones
 

@@ -1,6 +1,6 @@
 import type { Role } from "@/generated/prisma/enums";
 
-export type NavIcon = "home" | "profile" | "doctor" | "overview" | "users" | "verify" | "health" | "documents" | "history" | "emergency" | "search" | "doctors" | "activity" | "settings";
+export type NavIcon = "home" | "profile" | "doctor" | "overview" | "users" | "verify" | "health" | "documents" | "history" | "emergency" | "search" | "doctors" | "activity" | "settings" | "evolution";
 /** `primary`: aparece en la barra inferior del celular (máx. 4); el resto va en "Más". */
 export type NavItem = { href: string; label: string; icon: NavIcon; exact?: boolean; exclude?: string[]; primary?: boolean };
 /** `role` ausente = sección visible para cualquier usuario autenticado. */
@@ -17,6 +17,7 @@ export const NAV_SECTIONS: NavSection[] = [
       { href: "/patient/health", label: "Mi salud", icon: "health", primary: true },
       { href: "/patient/documents", label: "Estudios", icon: "documents", primary: true },
       { href: "/patient/history", label: "Historial", icon: "history" },
+      { href: "/patient/evolution", label: "Evolución", icon: "evolution" },
       { href: "/patient/doctors", label: "Mis médicos", icon: "doctors", primary: true },
       { href: "/patient/emergency", label: "Emergencia", icon: "emergency" },
       { href: "/patient/search", label: "Buscar", icon: "search" },

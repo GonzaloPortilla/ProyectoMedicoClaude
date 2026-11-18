@@ -2,6 +2,7 @@ import "server-only";
 import { db } from "@/server/db";
 import { can, viewableCategories, viewableSections, type DoctorAccess } from "@/server/access/policy";
 import { getTimeline } from "@/server/medical/timeline";
+import { measurementSelect } from "@/server/documents/review";
 
 /**
  * Lecturas de datos clínicos para un médico. Cada función recibe un DoctorAccess ya
@@ -36,6 +37,7 @@ export async function getTimelineForDoctor(access: DoctorAccess) {
     {},
     {
       allowedCategories: allowed,
+      confirmedOnly: true,
       recordHref: (id) => `/doctor/patients/${access.patientId}/records/${id}`,
       healthHref: () => null,
     },
@@ -62,6 +64,8 @@ export async function getRecordForDoctor(access: DoctorAccess, recordId: string)
       category: { select: { slug: true, name: true } },
       institution: { select: { name: true } },
       files: { select: { id: true, originalName: true, mimeType: true, sizeBytes: true } },
+      // Sólo resultados confirmados por el paciente; el registro ya está filtrado por categoría autorizada.
+      measurements: { where: { reviewStatus: "CONFIRMED" }, orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: measurementSelect },
       report: {
         select: {
           id: true,

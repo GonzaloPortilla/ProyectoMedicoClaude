@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight, ChevronRight, Droplet, FileText, HeartPulse, Inbox, Pill, Plus, ShieldAlert, Share2, Siren, UserRoundCheck } from "lucide-react";
+import { ArrowRight, ChevronRight, Droplet, FileText, HeartPulse, Inbox, Pill, Plus, ShieldAlert, Share2, Siren, Sparkles, UserRoundCheck } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { ButtonLink } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import { listGrantsForPatient, listPendingRequestsForPatient } from "@/server/ac
 import { sweepExpiredGrants } from "@/server/access/expiry";
 import { getHealthOverview } from "@/server/medical/health";
 import { listRecords } from "@/server/medical/records";
+import { db } from "@/server/db";
 import { requirePatient } from "@/server/patient/context";
 import { formatDate, greeting, joinUnique } from "@/lib/utils";
 
@@ -48,7 +49,7 @@ function Stat({ icon: Icon, label, children }: { icon: typeof Droplet; label: st
 export default async function PatientDashboardPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { user, patientId } = await requirePatient();
   await sweepExpiredGrants();
-  const [profile, { welcome }, health, records, grants, pending, activity] = await Promise.all([
+  const [profile, { welcome }, health, records, grants, pending, activity, toReview] = await Promise.all([
     getOwnPatientProfile(user.id),
     searchParams,
     getHealthOverview(patientId),
@@ -56,6 +57,7 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
     listGrantsForPatient(patientId),
     listPendingRequestsForPatient(patientId),
     listActivity({ userId: user.id, patientId, filter: "highlights", take: 4 }),
+    db.documentExtraction.findMany({ where: { patientId, status: "READY_FOR_REVIEW" }, orderBy: { createdAt: "desc" }, take: 5, select: { recordId: true } }),
   ]);
   const completion = profileCompletion(profile);
   const activeConditions = health.conditions.filter((c) => c.status === "ACTIVE");
@@ -99,6 +101,19 @@ export default async function PatientDashboardPage({ searchParams }: { searchPar
             </ButtonLink>
           </div>
         </Card>
+      ) : null}
+
+      {toReview.length ? (
+        <Link
+          href={`/patient/documents/${toReview[0]!.recordId}/review`}
+          className="mb-6 flex items-center justify-between gap-3 rounded-2xl bg-amber-50 px-4 py-3 text-sm text-amber-900 ring-1 ring-amber-200/70 ring-inset hover:bg-amber-100/60"
+        >
+          <span className="flex items-center gap-2">
+            <Sparkles className="size-4 shrink-0" aria-hidden />
+            {toReview.length === 1 ? "Tenés un estudio analizado para revisar." : `Tenés ${toReview.length} estudios analizados para revisar.`} Nada se guarda como definitivo hasta que lo confirmes.
+          </span>
+          <ChevronRight className="size-4 shrink-0" />
+        </Link>
       ) : null}
 
       {completion.percent < 100 ? (
