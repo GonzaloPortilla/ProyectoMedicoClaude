@@ -8,7 +8,7 @@ import { hasRole } from "@/server/auth/roles";
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   // Todo lo que está bajo (app) requiere sesión válida (verificada contra la base).
   const user = await requireUser();
-  const sections = NAV_SECTIONS.filter((s) => hasRole(user.roles, s.role));
+  const sections = NAV_SECTIONS.filter((s) => !s.role || hasRole(user.roles, s.role));
 
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[256px_minmax(0,1fr)]">

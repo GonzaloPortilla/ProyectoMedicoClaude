@@ -47,7 +47,7 @@ function List({ items }: { items: { key: string; primary: string; secondary?: st
 export default async function DoctorPatientPage({ params }: { params: Promise<{ patientId: string }> }) {
   const { patientId } = await params;
   // Sin acceso vigente → 404. El acceso queda registrado.
-  const { access } = await requireDoctorAccess(patientId, { action: "VIEW_PATIENT" });
+  const { access } = await requireDoctorAccess(patientId, { action: "PATIENT_SUMMARY_VIEWED" });
   const [overview, timeline, categories, grantPerms] = await Promise.all([
     getPatientOverviewForDoctor(access),
     getTimelineForDoctor(access),

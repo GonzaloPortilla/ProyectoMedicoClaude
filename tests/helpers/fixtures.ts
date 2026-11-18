@@ -8,5 +8,6 @@ export function file(name: string, bytes: Uint8Array) {
   return { name, size: bytes.length, bytes };
 }
 
+/** Limpia los datos entre tests. audit_events NO se trunca: es inmutable (los tests filtran por ids). */
 export const TRUNCATE_ALL =
-  'TRUNCATE "users", "user_roles", "patient_profiles", "doctor_profiles", "doctor_verifications", "sessions", "password_reset_tokens", "medical_records", "medical_files", "institutions", "access_requests", "access_grants", "access_logs", "patient_link_codes", "medical_reports", "medical_report_versions" CASCADE';
+  'TRUNCATE "users", "user_roles", "patient_profiles", "doctor_profiles", "doctor_verifications", "sessions", "password_reset_tokens", "email_verification_tokens", "mfa_recovery_codes", "medical_records", "medical_files", "institutions", "access_requests", "access_grants", "patient_link_codes", "medical_reports", "medical_report_versions" CASCADE';

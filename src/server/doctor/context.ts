@@ -3,7 +3,8 @@ import { notFound, redirect } from "next/navigation";
 import { db } from "@/server/db";
 import { authorizeRole, requireRole, type CurrentUser } from "@/server/auth/dal";
 import { getDoctorAccess, type DoctorAccess } from "@/server/access/policy";
-import { logAccess } from "@/server/access/log";
+import { audit } from "@/server/audit/log";
+import { requestContext } from "@/server/audit/request";
 
 async function isVerified(userId: string) {
   const p = await db.doctorProfile.findUnique({ where: { userId }, select: { verificationStatus: true } });
@@ -28,10 +29,17 @@ export async function authorizeVerifiedDoctor(): Promise<CurrentUser | null> {
  * Para páginas /doctor/patients/[patientId]/…: exige acceso vigente. Sin acceso responde 404
  * (igual que un paciente inexistente: no se revela si el id existe).
  */
-export async function requireDoctorAccess(patientId: string, log?: { action: "VIEW_PATIENT" | "VIEW_RECORD"; resourceId?: string }): Promise<{ user: CurrentUser; access: DoctorAccess }> {
+export async function requireDoctorAccess(patientId: string, log?: { action: "PATIENT_SUMMARY_VIEWED" }): Promise<{ user: CurrentUser; access: DoctorAccess }> {
   const user = await requireVerifiedDoctor();
   const access = await getDoctorAccess(user.id, patientId);
-  if (!access) notFound();
-  if (log) await logAccess({ patientId, actorUserId: user.id, grantId: access.grantId, action: log.action, resourceId: log.resourceId });
+  if (!access) {
+    // Intento sin acceso vigente (vencido, revocado o id manipulado): se registra si el paciente existe.
+    const exists = patientId.length <= 64 && (await db.patientProfile.findUnique({ where: { id: patientId }, select: { id: true } }));
+    if (exists) await audit({ action: "ACCESS_DENIED", outcome: "DENIED", actorType: "DOCTOR", actorUserId: user.id, subjectPatientId: patientId, resourceType: "PATIENT", resourceId: patientId }, await requestContext());
+    notFound();
+  }
+  if (log) {
+    await audit({ action: log.action, actorType: "DOCTOR", actorUserId: user.id, subjectPatientId: patientId, resourceType: "PATIENT", resourceId: patientId, grantId: access.grantId }, await requestContext());
+  }
   return { user, access };
 }

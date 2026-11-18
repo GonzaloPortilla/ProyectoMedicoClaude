@@ -13,3 +13,6 @@ if (process.env.TEST_DATABASE_URL) {
 // Archivos de test en un directorio temporal aislado.
 process.env.STORAGE_DRIVER = "local";
 process.env.LOCAL_STORAGE_DIR = mkdtempSync(path.join(tmpdir(), "medapp-test-storage-"));
+
+// Sin emails en la consola durante los tests.
+process.env.MAIL_TRANSPORT = "disabled";

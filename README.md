@@ -7,6 +7,7 @@ Base de una aplicación web para que pacientes guarden su información médica y
 | 1 | ✅ | Autenticación, usuarios, roles (paciente / médico / administrador), perfiles, dashboards, verificación manual de médicos |
 | 2 | ✅ | Experiencia del paciente: Mi salud, estudios con archivos privados, historial cronológico, buscador, información de emergencia |
 | 3 | ✅ | Médicos con acceso autorizado por el paciente: código de vinculación, solicitudes, permisos granulares con vencimiento, revocación, informes versionados y registro de accesos |
+| 4 | ✅ | Seguridad, auditoría y privacidad: audit log inmutable y encadenado, "Actividad de mi cuenta", MFA (TOTP), verificación de email, bloqueo por fuerza bruta, enlaces temporales de archivos, CSP con nonce, configuración de privacidad y exportación de datos. Ver **[SECURITY.md](SECURITY.md)** |
 
 ## Stack
 
@@ -97,6 +98,8 @@ Abrí http://localhost:3000.
 | `Configuración incompleta (DATABASE_URL)` | Falta el archivo `.env`: hacé el paso 2 y reiniciá `npm run dev`. |
 | `Can't reach database server at localhost:5432` | PostgreSQL no está corriendo: hacé el paso 3 (con Docker, verificá que Docker Desktop esté abierto). |
 | `Module not found: '@/generated/prisma/client'` | El cliente de Prisma no se generó. Corré `npm run db:generate`. |
+| `Tenés que verificar tu email` | En desarrollo no se envían emails reales: el enlace de activación aparece en la **consola donde corre `npm run dev`**. Las cuentas demo ya están verificadas. |
+| `Demasiados intentos` al ingresar | La cuenta se bloquea 15 minutos tras 5 intentos fallidos. Esperá o restablecé la contraseña. |
 | La página se ve sin estilos | Borrá la carpeta `.next` y volvé a correr `npm run dev`. |
 | Errores de permisos o archivos bloqueados en Windows | Evitá carpetas sincronizadas por OneDrive para el proyecto (por ejemplo, usá `C:\dev\ProyectoMedicoClaude`). |
 
@@ -134,6 +137,14 @@ Un médico **nunca** puede entrar libremente al historial de un paciente:
 
 Para probarlo con los datos demo: entrá como `carla@demo.local` y aceptá la solicitud del Dr. Pérez, o como `martin@demo.local` generá un código y usalo desde `juan.perez@demo.local`.
 
+### Seguridad de la cuenta (Fase 4)
+
+- **Registro**: para ingresar hay que activar la cuenta con el enlace que llega por email (en desarrollo, el enlace aparece en la consola del servidor). El registro responde lo mismo si el email ya existe, así no se puede averiguar quién está registrado.
+- **Verificación en dos pasos (TOTP)**: en *Configuración → Seguridad*, con cualquier app de autenticación. Incluye 10 códigos de recuperación. En producción es obligatoria para administradores (`MFA_REQUIRED_ROLES`).
+- **Sesiones**: se cierran por inactividad (24 h paciente, 2 h médico/administrador) y como máximo a los 7 días o a las 12 h, según el rol. Se pueden ver y cerrar desde *Configuración → Seguridad*.
+- **Actividad de mi cuenta**: *Configuración → Actividad* muestra quién accedió a qué y cuándo, en frases simples. No se puede editar ni borrar.
+- **Privacidad**: *Configuración → Privacidad* resume quién ve tu información y permite descargar tus datos.
+
 ### Recuperación de contraseña
 
 En `/forgot-password` se genera un enlace de un solo uso que vence en 30 minutos. Todavía no hay proveedor de email: con `MAIL_TRANSPORT=console` el enlace **se imprime en la consola del servidor**. Para producción hay que implementar un proveedor en `src/server/mail/mailer.ts`.
@@ -152,6 +163,8 @@ En `/forgot-password` se genera un enlace de un solo uso que vence en 30 minutos
 | `npm run db:seed` | Datos demo (se niega a correr con `NODE_ENV=production`) |
 | `npm run db:reset` | Borra la base, re-migra y vuelve a cargar el seed |
 | `npm run db:studio` | Prisma Studio |
+| `npm run audit:verify` | Verifica la integridad de la cadena de auditoría |
+| `npm run jobs:expire-access` | Marca y registra los accesos médicos vencidos (para programar con cron) |
 
 ## Arquitectura
 
@@ -245,6 +258,7 @@ El **historial** se arma al vuelo combinando `MedicalRecord` con los datos fecha
 - **Aislamiento entre pacientes:** el `patientId` se obtiene siempre de la sesión (`src/server/patient/context.ts`), nunca de la URL o del formulario. Toda consulta filtra por él; un id ajeno responde 404, igual que uno inexistente. Cubierto por `tests/integration/patient-isolation.test.ts`.
 - **Acceso médico:** una única política (`src/server/access/policy.ts`) decide, en **cada request** y contra la base, si existe un grant vigente: estado activo, no revocado, no vencido y médico todavía verificado. No hay caché, así que vencimiento y revocación se aplican al instante. Las consultas del médico sólo piden a la base lo autorizado, y lo no autorizado nunca sale del servidor. Un id ajeno o sin permiso responde 404. Cubierto por `tests/integration/doctor-access.test.ts` (los 6 casos obligatorios y más).
 - **Archivos:** validación por firma de bytes, nombres saneados, claves aleatorias, `Cache-Control: no-store`, `nosniff` y CSP restrictiva al servirlos. Ni el administrador ni los médicos (todavía) pueden abrirlos.
+- **Fase 4:** el modelo de amenazas completo, los controles y el checklist de producción están en **[SECURITY.md](SECURITY.md)**.
 - **Secretos:** sólo en `.env` (ignorado por git); `.env.example` no tiene valores reales.
 
 ## Pendiente para próximas fases

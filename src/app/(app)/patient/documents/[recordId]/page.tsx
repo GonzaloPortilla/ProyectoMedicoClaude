@@ -13,6 +13,7 @@ import { DeleteRecordButton } from "@/features/records/components/delete-record-
 import { ReportView } from "@/features/access/components/report-view";
 import { getRecord } from "@/server/medical/records";
 import { requirePatient } from "@/server/patient/context";
+import { signedFileUrl } from "@/server/files/urls";
 import { formatBytes } from "@/lib/text";
 import { formatDate } from "@/lib/utils";
 
@@ -25,7 +26,7 @@ export default async function RecordDetailPage({
   params: Promise<{ recordId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { patientId } = await requirePatient();
+  const { user, patientId } = await requirePatient();
   const [{ recordId }, { created }] = await Promise.all([params, searchParams]);
   // Filtra por el patientId de la sesión: el registro de otro paciente responde 404.
   const record = await getRecord(patientId, recordId);
@@ -111,7 +112,9 @@ export default async function RecordDetailPage({
             ) : (
               <ul className="space-y-4">
                 {record.files.map((f) => {
-                  const url = `/api/files/${f.id}`;
+                  // Enlaces temporales firmados (10 min) atados a este usuario.
+                  const url = signedFileUrl(user.id, f.id);
+                  const downloadUrl = signedFileUrl(user.id, f.id, "attachment");
                   const isImage = f.mimeType.startsWith("image/");
                   return (
                     <li key={f.id} className="space-y-3">
@@ -134,7 +137,7 @@ export default async function RecordDetailPage({
                         <a href={url} target="_blank" rel="noopener noreferrer" className={buttonClasses({ variant: "secondary", size: "sm" })} aria-label={`Ver ${f.originalName}`}>
                           <ExternalLink className="size-3.5" /> <span className="hidden sm:inline">Ver</span>
                         </a>
-                        <a href={`${url}?download=1`} className={buttonClasses({ variant: "ghost", size: "sm" })} aria-label={`Descargar ${f.originalName}`}>
+                        <a href={downloadUrl} className={buttonClasses({ variant: "ghost", size: "sm" })} aria-label={`Descargar ${f.originalName}`}>
                           <Download className="size-3.5" />
                         </a>
                       </div>

@@ -8,15 +8,14 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { file, PDF_BYTES, TRUNCATE_ALL } from "../helpers/fixtures";
+import { requestFile, signedParams, verifiedDoctor, verifiedPatient } from "../helpers/users";
 
 const hasDb = !!process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!hasDb)("aislamiento entre pacientes", async () => {
   const { db } = await import("@/server/db");
-  const { registerPatient, registerDoctor } = await import("@/server/auth/service");
   const { createSession } = await import("@/server/auth/session");
   const { authorizeFileRequest } = await import("@/server/files/access");
-  const { patientIdForUser } = await import("@/server/patient/context");
   const records = await import("@/server/medical/records");
   const { searchPatientData } = await import("@/server/medical/search");
   const { getTimeline } = await import("@/server/medical/timeline");
@@ -25,18 +24,16 @@ describe.skipIf(!hasDb)("aislamiento entre pacientes", async () => {
 
   let a: { userId: string; patientId: string; token: string };
   let b: { userId: string; patientId: string; token: string };
-  let adminToken: string;
-  let doctorToken: string;
+  let admin: { userId: string; token: string };
+  let doctor: { userId: string; token: string };
   let aRecordId: string;
   let aFileId: string;
   let aStorageKey: string;
   let aAllergyId: string;
 
   async function patient(email: string) {
-    const r = await registerPatient({ firstName: "Test", lastName: "Paciente", email, password: "Prueba1234" });
-    if (!r.ok) throw new Error(r.error);
-    const { token } = await createSession(r.data.userId);
-    return { userId: r.data.userId, patientId: await patientIdForUser(r.data.userId), token };
+    const p = await verifiedPatient(email);
+    return { ...p, token: (await createSession(p.userId)).token };
   }
 
   beforeAll(async () => {
@@ -44,12 +41,10 @@ describe.skipIf(!hasDb)("aislamiento entre pacientes", async () => {
     a = await patient("paciente.a@test.local");
     b = await patient("paciente.b@test.local");
 
-    const admin = await db.user.create({ data: { email: "admin@test.local", passwordHash: "x", firstName: "Admin", lastName: "Test", roles: { create: { role: "ADMIN" } } } });
-    adminToken = (await createSession(admin.id)).token;
-    const doc = await registerDoctor({ firstName: "Doc", lastName: "Test", email: "doc@test.local", password: "Prueba1234", specialty: "Clínica", licenseNumber: "1", jurisdiction: "AR-C" });
-    if (!doc.ok) throw new Error();
-    await db.doctorProfile.updateMany({ data: { verificationStatus: "VERIFIED" } });
-    doctorToken = (await createSession(doc.data.userId)).token;
+    const adminUser = await db.user.create({ data: { email: "admin@test.local", passwordHash: "x", emailVerifiedAt: new Date(), firstName: "Admin", lastName: "Test", roles: { create: { role: "ADMIN" } } } });
+    admin = { userId: adminUser.id, token: (await createSession(adminUser.id)).token };
+    const doc = await verifiedDoctor("doc@test.local", "MN-1");
+    doctor = { userId: doc.userId, token: (await createSession(doc.userId)).token };
 
     const created = await records.createRecord(
       a.patientId,
@@ -72,7 +67,7 @@ describe.skipIf(!hasDb)("aislamiento entre pacientes", async () => {
   });
 
   it("el dueño (A) sí puede acceder a su archivo", async () => {
-    const res = await authorizeFileRequest(a.token, aFileId);
+    const res = await requestFile(a.token, a.userId, aFileId);
     expect(res.status).toBe(200);
     expect(res.file?.id).toBe(aFileId);
     const bytes = await getStorage().get(res.file!.storageKey);
@@ -80,15 +75,36 @@ describe.skipIf(!hasDb)("aislamiento entre pacientes", async () => {
   });
 
   it("B NO puede descargar el archivo de A usando su id en la URL (/api/files/:id)", async () => {
-    const res = await authorizeFileRequest(b.token, aFileId);
+    const res = await requestFile(b.token, b.userId, aFileId);
     expect(res.status).toBe(404);
     expect(res.file).toBeNull();
   });
 
   it("la respuesta para B es idéntica a la de un id inexistente (no revela existencia)", async () => {
-    const forbidden = await authorizeFileRequest(b.token, aFileId);
-    const missing = await authorizeFileRequest(b.token, "id-que-no-existe");
+    const forbidden = await requestFile(b.token, b.userId, aFileId);
+    const missing = await requestFile(b.token, b.userId, "id-que-no-existe");
     expect(forbidden).toEqual(missing);
+  });
+
+  it("el enlace firmado de A no le sirve a B ni a nadie más (está atado al usuario)", async () => {
+    const aLink = await signedParams(a.userId, aFileId);
+    expect((await authorizeFileRequest(b.token, aFileId, aLink)).status).toBe(404);
+    expect((await authorizeFileRequest(a.token, aFileId, aLink)).status).toBe(200);
+  });
+
+  it("sin enlace firmado, con firma alterada o vencida, el dueño tampoco descarga (no hay URLs permanentes)", async () => {
+    expect((await authorizeFileRequest(a.token, aFileId)).status).toBe(403);
+    const link = await signedParams(a.userId, aFileId);
+    expect((await authorizeFileRequest(a.token, aFileId, { ...link, sig: link.sig!.slice(0, -2) + "xx" })).status).toBe(403);
+    expect((await authorizeFileRequest(a.token, aFileId, { ...link, exp: String(Date.now() - 1000) })).status).toBe(403);
+    // Cambiar ver→descargar invalida la firma.
+    expect((await authorizeFileRequest(a.token, aFileId, { ...link, download: "1" })).status).toBe(403);
+  });
+
+  it("cada visualización y descarga queda auditada", async () => {
+    await requestFile(a.token, a.userId, aFileId, "attachment");
+    const ev = await db.auditEvent.findMany({ where: { resourceId: aFileId, actorUserId: a.userId } });
+    expect(ev.map((e) => e.action)).toEqual(expect.arrayContaining(["FILE_VIEWED", "FILE_DOWNLOADED"]));
   });
 
   it("sin sesión o con sesión falsificada no hay acceso", async () => {
@@ -97,8 +113,8 @@ describe.skipIf(!hasDb)("aislamiento entre pacientes", async () => {
   });
 
   it("ni el administrador ni un médico verificado acceden a archivos de pacientes", async () => {
-    expect((await authorizeFileRequest(adminToken, aFileId)).file).toBeNull();
-    expect((await authorizeFileRequest(doctorToken, aFileId)).file).toBeNull();
+    expect((await requestFile(admin.token, admin.userId, aFileId)).file).toBeNull();
+    expect((await requestFile(doctor.token, doctor.userId, aFileId)).file).toBeNull();
   });
 
   it("B NO puede ver el detalle del registro de A (/patient/documents/:id)", async () => {
@@ -132,6 +148,6 @@ describe.skipIf(!hasDb)("aislamiento entre pacientes", async () => {
     expect(await records.deleteRecord(a.patientId, aRecordId)).toBe(true);
     expect(await db.medicalFile.count({ where: { id: aFileId } })).toBe(0);
     await expect(getStorage().get(aStorageKey)).rejects.toThrow();
-    expect((await authorizeFileRequest(a.token, aFileId)).status).toBe(404);
+    expect((await requestFile(a.token, a.userId, aFileId)).status).toBe(404);
   });
 });

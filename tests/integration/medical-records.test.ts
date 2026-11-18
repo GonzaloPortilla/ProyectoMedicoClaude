@@ -1,12 +1,11 @@
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import { file, HTML_BYTES, PNG_BYTES, TRUNCATE_ALL } from "../helpers/fixtures";
+import { verifiedPatient } from "../helpers/users";
 
 const hasDb = !!process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!hasDb)("registros médicos, historial y búsqueda", async () => {
   const { db } = await import("@/server/db");
-  const { registerPatient } = await import("@/server/auth/service");
-  const { patientIdForUser } = await import("@/server/patient/context");
   const records = await import("@/server/medical/records");
   const health = await import("@/server/medical/health");
   const { getTimeline, getTimelineFilterOptions } = await import("@/server/medical/timeline");
@@ -20,10 +19,7 @@ describe.skipIf(!hasDb)("registros médicos, historial y búsqueda", async () =>
 
   beforeEach(async () => {
     await db.$executeRawUnsafe(TRUNCATE_ALL);
-    const r = await registerPatient({ firstName: "Ana", lastName: "Test", email: "ana@test.local", password: "Prueba1234" });
-    if (!r.ok) throw new Error();
-    userId = r.data.userId;
-    patientId = await patientIdForUser(userId);
+    ({ userId, patientId } = await verifiedPatient("ana@test.local"));
   });
 
   afterAll(async () => {

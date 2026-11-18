@@ -17,6 +17,7 @@ import { listActiveCategories } from "@/server/medical/records";
 import { jurisdictionName } from "@/lib/jurisdictions";
 import { formatDate, fullName, greeting } from "@/lib/utils";
 import { requireRole } from "@/server/auth/dal";
+import { sweepExpiredGrants } from "@/server/access/expiry";
 
 export const metadata: Metadata = { title: "Panel profesional" };
 
@@ -55,6 +56,7 @@ export default async function DoctorDashboardPage({ searchParams }: { searchPara
   }
 
   const verified = profile.verificationStatus === "VERIFIED";
+  if (verified) await sweepExpiredGrants();
   const [grants, pending, categories] = verified
     ? await Promise.all([listActiveGrantsForDoctor(user.id), listPendingRequestsForDoctor(user.id), listActiveCategories()])
     : [[], [], []];

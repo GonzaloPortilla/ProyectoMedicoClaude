@@ -55,6 +55,18 @@ model User {
   createdAt       DateTime   @default(now())
   updatedAt       DateTime   @updatedAt
 
+  // Seguridad (Fase 4)
+  /// Intentos fallidos consecutivos (se reinicia con un login exitoso).
+  failedLoginCount  Int       @default(0)
+  /// Bloqueo temporal por fuerza bruta.
+  lockedUntil       DateTime?
+  passwordChangedAt DateTime?
+  /// Secreto TOTP cifrado (AES-256-GCM). null = MFA no configurada.
+  mfaSecretEnc      String?
+  mfaEnabledAt      DateTime?
+  /// Último paso de tiempo TOTP aceptado (evita reutilizar un código).
+  mfaLastUsedStep   Int?
+
   roles               UserRole[]           @relation("UserRoles")
   rolesGranted        UserRole[]           @relation("RoleGrantedBy")
   sessions            Session[]
@@ -75,12 +87,13 @@ model User {
   createdFamilyItems  FamilyHistory[]   @relation("FamilyHistoryCreatedBy")
 
   // Acceso médico (Fase 3)
-  accessRequests  AccessRequest[]        @relation("DoctorRequests")
-  accessGrants    AccessGrant[]          @relation("DoctorGrants")
-  accessLogs      AccessLog[]            @relation("AccessLogActor")
-  usedLinkCodes   PatientLinkCode[]      @relation("LinkCodeUsedBy")
-  reportsAuthored MedicalReport[]        @relation("ReportAuthor")
-  reportVersions  MedicalReportVersion[] @relation("ReportVersionAuthor")
+  accessRequests          AccessRequest[]          @relation("DoctorRequests")
+  accessGrants            AccessGrant[]            @relation("DoctorGrants")
+  emailVerificationTokens EmailVerificationToken[]
+  mfaRecoveryCodes        MfaRecoveryCode[]
+  usedLinkCodes           PatientLinkCode[]        @relation("LinkCodeUsedBy")
+  reportsAuthored         MedicalReport[]          @relation("ReportAuthor")
+  reportVersions          MedicalReportVersion[]   @relation("ReportVersionAuthor")
 
   @@map("users")
 }
@@ -135,7 +148,6 @@ model PatientProfile {
   linkCodes      PatientLinkCode[]
   accessRequests AccessRequest[]
   accessGrants   AccessGrant[]
-  accessLogs     AccessLog[]
   reports        MedicalReport[]
 
   @@map("patient_profiles")
@@ -181,12 +193,20 @@ model DoctorVerification {
 
 model Session {
   /// SHA-256 del token de sesión. El token en claro sólo existe en la cookie.
-  id        String   @id
-  userId    String
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  ipAddress String?
-  userAgent String?
+  id          String   @id
+  /// Identificador no secreto para listar y cerrar sesiones desde la interfaz.
+  publicId    String   @unique @default(cuid())
+  userId      String
+  /// Vencimiento absoluto.
+  expiresAt   DateTime
+  /// Última actividad (para el vencimiento por inactividad).
+  lastSeenAt  DateTime @default(now())
+  /// La sesión pasó el segundo factor (o el usuario no tiene MFA).
+  mfaVerified Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  /// IP anonimizada (último octeto / últimos 80 bits en cero).
+  ipAddress   String?
+  userAgent   String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -550,6 +570,8 @@ enum AccessGrantStatus {
   ACTIVE
   REVOKED
   SUPERSEDED
+  /// Venció por tiempo (lo marca el barrido de vencimientos; la política ya lo bloquea antes).
+  EXPIRED
 }
 
 /// Tipo de recurso sobre el que se otorga un permiso. Extensible.
@@ -565,17 +587,6 @@ enum AccessAction {
   VIEW
   UPLOAD
   CREATE_MEDICAL_ENTRY
-}
-
-enum AccessLogAction {
-  REQUEST_CREATED
-  GRANT_CREATED
-  GRANT_REVOKED
-  VIEW_PATIENT
-  VIEW_RECORD
-  VIEW_FILE
-  CREATE_REPORT
-  CORRECT_REPORT
 }
 
 /// Código de vinculación de un solo uso que el paciente comparte con su médico.
@@ -633,7 +644,6 @@ model AccessGrant {
   doctor      User               @relation("DoctorGrants", fields: [doctorUserId], references: [id], onDelete: Cascade)
   request     AccessRequest?     @relation(fields: [requestId], references: [id], onDelete: SetNull)
   permissions AccessPermission[]
-  logs        AccessLog[]
 
   @@index([doctorUserId, status])
   @@index([patientId, status])
@@ -652,25 +662,6 @@ model AccessPermission {
 
   @@unique([grantId, resourceType, resourceKey, action])
   @@map("access_permissions")
-}
-
-/// Registro inmutable de cada acceso y acción de un médico sobre datos de un paciente.
-model AccessLog {
-  id          String          @id @default(cuid())
-  patientId   String
-  actorUserId String?
-  grantId     String?
-  action      AccessLogAction
-  resourceId  String?
-  createdAt   DateTime        @default(now())
-
-  patient PatientProfile @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  actor   User?          @relation("AccessLogActor", fields: [actorUserId], references: [id], onDelete: SetNull)
-  grant   AccessGrant?   @relation(fields: [grantId], references: [id], onDelete: SetNull)
-
-  @@index([patientId, createdAt])
-  @@index([grantId])
-  @@map("access_logs")
 }
 
 /// Informe médico creado por un médico autorizado. Se muestra en el historial a través de su MedicalRecord.
@@ -716,4 +707,131 @@ model MedicalReportVersion {
 
   @@unique([reportId, version])
   @@map("medical_report_versions")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FASE 4 — Seguridad, auditoría y privacidad
+// ─────────────────────────────────────────────────────────────────────────────
+
+enum AuditAction {
+  // Autenticación y cuenta
+  LOGIN_SUCCEEDED
+  LOGIN_FAILED
+  LOGIN_LOCKED
+  LOGOUT
+  SESSION_REVOKED
+  MFA_CHALLENGE_FAILED
+  MFA_ENABLED
+  MFA_DISABLED
+  MFA_RECOVERY_CODE_USED
+  PASSWORD_CHANGED
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET_COMPLETED
+  EMAIL_VERIFIED
+  ACCOUNT_REGISTERED
+  PROFILE_UPDATED
+  DATA_EXPORTED
+  // Información médica
+  RECORD_CREATED
+  RECORD_DELETED
+  RECORD_VIEWED
+  FILE_VIEWED
+  FILE_DOWNLOADED
+  HEALTH_ENTRY_CREATED
+  HEALTH_ENTRY_DELETED
+  EMERGENCY_SETTINGS_UPDATED
+  // Acceso de médicos
+  LINK_CODE_CREATED
+  ACCESS_REQUESTED
+  ACCESS_REQUEST_CANCELLED
+  ACCESS_GRANTED
+  ACCESS_REJECTED
+  ACCESS_REVOKED
+  ACCESS_EXPIRED
+  ACCESS_DENIED
+  PATIENT_SUMMARY_VIEWED
+  REPORT_CREATED
+  REPORT_CORRECTED
+  // Administración
+  DOCTOR_VERIFICATION_DECIDED
+}
+
+enum AuditOutcome {
+  SUCCESS
+  FAILURE
+  DENIED
+}
+
+enum AuditActorType {
+  PATIENT
+  DOCTOR
+  ADMIN
+  SYSTEM
+  ANONYMOUS
+}
+
+/// Registro de auditoría APPEND-ONLY y encadenado.
+///
+/// - Sin claves foráneas: el registro sobrevive aunque se borre el usuario o el recurso,
+///   y ninguna cascada puede modificarlo.
+/// - La base rechaza UPDATE, DELETE y TRUNCATE (triggers).
+/// - Cada fila guarda el hash de la anterior (prevHash) y el propio (hash), calculados por
+///   un trigger: alterar o borrar una fila rompe la cadena y `npm run audit:verify` lo detecta.
+/// - Minimización: nunca se guardan contenidos clínicos, contraseñas, tokens ni nombres de
+///   archivo; sólo identificadores y metadatos no sensibles.
+model AuditEvent {
+  id               String         @id @default(cuid())
+  /// Orden total de la cadena (lo asigna el trigger bajo un lock).
+  seq              BigInt         @unique @default(autoincrement())
+  createdAt        DateTime       @default(now())
+  action           AuditAction
+  outcome          AuditOutcome   @default(SUCCESS)
+  actorType        AuditActorType
+  actorUserId      String?
+  /// Paciente cuyos datos se vieron afectados (alimenta "Actividad de mi cuenta").
+  subjectPatientId String?
+  resourceType     String?
+  resourceId       String?
+  grantId          String?
+  /// IP anonimizada.
+  ip               String?
+  userAgent        String?
+  /// Metadatos no sensibles (lista blanca de claves; ver src/server/audit/log.ts).
+  metadata         Json?
+  prevHash         String?
+  hash             String?
+
+  @@index([subjectPatientId, createdAt])
+  @@index([actorUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_events")
+}
+
+model EmailVerificationToken {
+  id        String    @id @default(cuid())
+  userId    String
+  /// SHA-256 del token enviado por email.
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
+}
+
+/// Códigos de recuperación de MFA (un solo uso, guardados como hash).
+model MfaRecoveryCode {
+  id        String    @id @default(cuid())
+  userId    String
+  codeHash  String    @unique
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("mfa_recovery_codes")
 }

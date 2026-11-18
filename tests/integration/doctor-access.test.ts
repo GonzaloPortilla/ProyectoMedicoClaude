@@ -13,20 +13,18 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { file, PDF_BYTES, TRUNCATE_ALL } from "../helpers/fixtures";
+import { requestFile, verifiedDoctor, verifiedPatient } from "../helpers/users";
 import type { ResourceRef } from "@/features/access/resources";
 
 const hasDb = !!process.env.TEST_DATABASE_URL;
 
 describe.skipIf(!hasDb)("acceso de médicos a pacientes", async () => {
   const { db } = await import("@/server/db");
-  const { registerPatient, registerDoctor } = await import("@/server/auth/service");
   const { createSession } = await import("@/server/auth/session");
-  const { patientIdForUser } = await import("@/server/patient/context");
   const { generateLinkCode } = await import("@/server/access/codes");
   const requests = await import("@/server/access/requests");
   const { getDoctorAccess } = await import("@/server/access/policy");
   const view = await import("@/server/access/doctor-view");
-  const { authorizeFileRequest } = await import("@/server/files/access");
   const records = await import("@/server/medical/records");
   const reports = await import("@/server/medical/reports");
   const health = await import("@/server/medical/health");
@@ -43,15 +41,12 @@ describe.skipIf(!hasDb)("acceso de médicos a pacientes", async () => {
   const ALLERGIES: ResourceRef = { type: "HEALTH_SECTION", key: "ALLERGIES" };
 
   async function patient(email: string): Promise<Patient> {
-    const r = await registerPatient({ firstName: "Pac", lastName: email.split("@")[0]!, email, password: "Prueba1234" });
-    if (!r.ok) throw new Error(r.error);
-    return { userId: r.data.userId, patientId: await patientIdForUser(r.data.userId), token: (await createSession(r.data.userId)).token };
+    const p = await verifiedPatient(email);
+    return { ...p, token: (await createSession(p.userId)).token };
   }
   async function doctor(email: string, license: string, verified = true): Promise<Doctor> {
-    const r = await registerDoctor({ firstName: "Doc", lastName: license, email, password: "Prueba1234", specialty: "Clínica médica", licenseNumber: license, jurisdiction: "AR-NAC" });
-    if (!r.ok) throw new Error(r.error);
-    if (verified) await db.doctorProfile.update({ where: { userId: r.data.userId }, data: { verificationStatus: "VERIFIED" } });
-    return { userId: r.data.userId, token: (await createSession(r.data.userId)).token };
+    const d = await verifiedDoctor(email, license, { verified });
+    return { userId: d.userId, token: (await createSession(d.userId)).token };
   }
   async function addRecord(p: Patient, slug: string, title: string) {
     const r = await records.createRecord(
@@ -111,7 +106,7 @@ describe.skipIf(!hasDb)("acceso de médicos a pacientes", async () => {
       expect(await getDoctorAccess(D1.userId, A.patientId)).toBeNull();
     });
     it("no puede abrir archivos del paciente aunque conozca el id", async () => {
-      expect((await authorizeFileRequest(D1.token, rec.aLab!.fileId)).status).toBe(404);
+      expect((await requestFile(D1.token, D1.userId, rec.aLab!.fileId)).status).toBe(404);
     });
     it("una solicitud pendiente (sin aprobar) no otorga acceso", async () => {
       const { code } = await generateLinkCode(A.patientId);
@@ -136,7 +131,7 @@ describe.skipIf(!hasDb)("acceso de médicos a pacientes", async () => {
       expect(await getDoctorAccess(D2.userId, A.patientId)).not.toBeNull();
       await db.doctorProfile.update({ where: { userId: D2.userId }, data: { verificationStatus: "REJECTED" } });
       expect(await getDoctorAccess(D2.userId, A.patientId)).toBeNull();
-      expect((await authorizeFileRequest(D2.token, rec.aLab!.fileId)).status).toBe(404);
+      expect((await requestFile(D2.token, D2.userId, rec.aLab!.fileId)).status).toBe(404);
       await db.doctorProfile.update({ where: { userId: D2.userId }, data: { verificationStatus: "VERIFIED" } });
     });
   });
@@ -150,13 +145,13 @@ describe.skipIf(!hasDb)("acceso de médicos a pacientes", async () => {
     });
     it("no puede abrir archivos de B", async () => {
       await grant(A, D1, [LAB]);
-      expect((await authorizeFileRequest(D1.token, rec.aLab!.fileId)).status).toBe(200);
-      expect((await authorizeFileRequest(D1.token, rec.bLab!.fileId)).status).toBe(404);
+      expect((await requestFile(D1.token, D1.userId, rec.aLab!.fileId)).status).toBe(200);
+      expect((await requestFile(D1.token, D1.userId, rec.bLab!.fileId)).status).toBe(404);
     });
     it("otro médico tampoco hereda el acceso de D1", async () => {
       await grant(A, D1, [LAB]);
       expect(await getDoctorAccess(D2.userId, A.patientId)).toBeNull();
-      expect((await authorizeFileRequest(D2.token, rec.aLab!.fileId)).status).toBe(404);
+      expect((await requestFile(D2.token, D2.userId, rec.aLab!.fileId)).status).toBe(404);
     });
   });
 
@@ -178,7 +173,7 @@ describe.skipIf(!hasDb)("acceso de médicos a pacientes", async () => {
     });
     it("el archivo de Cardiología no se puede descargar", async () => {
       await grant(A, D1, [LAB]);
-      expect((await authorizeFileRequest(D1.token, rec.aCardio!.fileId)).status).toBe(404);
+      expect((await requestFile(D1.token, D1.userId, rec.aCardio!.fileId)).status).toBe(404);
     });
     it("las secciones de salud no autorizadas no se consultan (null), las autorizadas sí", async () => {
       await grant(A, D1, [LAB, ALLERGIES]);
@@ -214,7 +209,7 @@ describe.skipIf(!hasDb)("acceso de médicos a pacientes", async () => {
       // Simula el paso del tiempo: el grant venció hace 1 segundo.
       await db.accessGrant.update({ where: { id: grantId }, data: { expiresAt: new Date(Date.now() - 1000) } });
       expect(await getDoctorAccess(D1.userId, A.patientId)).toBeNull();
-      expect((await authorizeFileRequest(D1.token, rec.aLab!.fileId)).status).toBe(404);
+      expect((await requestFile(D1.token, D1.userId, rec.aLab!.fileId)).status).toBe(404);
       expect(await requests.listActiveGrantsForDoctor(D1.userId)).toHaveLength(0);
     });
     it("la política compara contra el instante actual", async () => {
@@ -241,11 +236,11 @@ describe.skipIf(!hasDb)("acceso de médicos a pacientes", async () => {
   describe("5. acceso revocado", () => {
     it("deja de funcionar inmediatamente", async () => {
       const grantId = await grant(A, D1, [LAB], { expiresAt: null });
-      expect((await authorizeFileRequest(D1.token, rec.aLab!.fileId)).status).toBe(200);
+      expect((await requestFile(D1.token, D1.userId, rec.aLab!.fileId)).status).toBe(200);
       expect(await requests.revokeGrant(A.patientId, A.userId, grantId)).toBe(true);
       // La siguiente consulta ya no encuentra acceso.
       expect(await getDoctorAccess(D1.userId, A.patientId)).toBeNull();
-      expect((await authorizeFileRequest(D1.token, rec.aLab!.fileId)).status).toBe(404);
+      expect((await requestFile(D1.token, D1.userId, rec.aLab!.fileId)).status).toBe(404);
     });
     it("un acceso ya obtenido (objeto en memoria) no sirve para crear informes tras revocar", async () => {
       const grantId = await grant(A, D1, [LAB], { allowCreate: true });
@@ -320,7 +315,7 @@ describe.skipIf(!hasDb)("acceso de médicos a pacientes", async () => {
     it("el administrador no puede abrir archivos de pacientes", async () => {
       const admin = await db.user.create({ data: { email: `adm${Date.now()}@test.local`, passwordHash: "x", firstName: "A", lastName: "D", roles: { create: { role: "ADMIN" } } } });
       const { token } = await createSession(admin.id);
-      expect((await authorizeFileRequest(token, rec.aLab!.fileId)).status).toBe(404);
+      expect((await requestFile(token, admin.id, rec.aLab!.fileId)).status).toBe(404);
     });
   });
 
@@ -374,10 +369,10 @@ describe.skipIf(!hasDb)("acceso de médicos a pacientes", async () => {
 
     it("cada acceso del médico queda registrado", async () => {
       await grant(A, D1, [LAB]);
-      await authorizeFileRequest(D1.token, rec.aLab!.fileId);
-      const logs = await db.accessLog.findMany({ where: { patientId: A.patientId, actorUserId: D1.userId, action: "VIEW_FILE" } });
+      await requestFile(D1.token, D1.userId, rec.aLab!.fileId);
+      const logs = await db.auditEvent.findMany({ where: { subjectPatientId: A.patientId, actorUserId: D1.userId, action: "FILE_VIEWED" } });
       expect(logs.length).toBeGreaterThan(0);
-      await expect(db.accessLog.updateMany({ where: { id: logs[0]!.id }, data: { action: "VIEW_PATIENT" } })).rejects.toThrow();
+      await expect(db.auditEvent.updateMany({ where: { id: logs[0]!.id }, data: { action: "PATIENT_SUMMARY_VIEWED" } })).rejects.toThrow();
     });
   });
 });

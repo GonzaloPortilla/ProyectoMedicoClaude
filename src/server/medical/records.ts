@@ -6,6 +6,9 @@ import { getStorage, newStorageKey } from "@/server/storage";
 import { validateUpload } from "@/server/files/validation";
 import { upsertInstitution } from "@/server/medical/institutions";
 import { normalizeText } from "@/lib/text";
+import { stripMetadata } from "@/server/files/sanitize";
+import { scanFile } from "@/server/files/scan";
+import { audit, type AuditContext } from "@/server/audit/log";
 import type { RecordInput } from "@/features/records/schemas";
 
 /**
@@ -29,7 +32,7 @@ function buildSearchText(parts: Array<string | null | undefined | string[]>): st
   return normalizeText(parts.flat().filter(Boolean).join(" ")).slice(0, 8000);
 }
 
-export async function createRecord(patientId: string, actor: Actor, input: RecordInput, file?: UploadedFile | null): Promise<Result<{ recordId: string }>> {
+export async function createRecord(patientId: string, actor: Actor, input: RecordInput, file?: UploadedFile | null, ctx: AuditContext = {}): Promise<Result<{ recordId: string }>> {
   const category = await db.medicalCategory.findFirst({ where: { slug: input.categorySlug, isActive: true }, select: { id: true, name: true } });
   if (!category) return { ok: false, field: "categorySlug", error: "Elegí un tipo válido" };
 
@@ -38,7 +41,10 @@ export async function createRecord(patientId: string, actor: Actor, input: Recor
     const check = validateUpload(file.name, file.size, file.bytes);
     if (!check.ok) return { ok: false, field: "file", error: check.error };
     const key = newStorageKey();
-    const buffer = Buffer.from(file.bytes);
+    // Privacidad: se quitan metadatos EXIF/GPS de las imágenes antes de guardarlas.
+    const buffer = stripMetadata(check.mime, Buffer.from(file.bytes));
+    const scan = await scanFile(buffer, check.mime);
+    if (!scan.clean) return { ok: false, field: "file", error: "El archivo no superó el control de seguridad." };
     await getStorage().put(key, buffer, check.mime);
     stored = { key, mime: check.mime, safeName: check.safeName, size: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
   }
@@ -79,6 +85,18 @@ export async function createRecord(patientId: string, actor: Actor, input: Recor
         select: { id: true },
       });
     });
+    await audit(
+      {
+        action: "RECORD_CREATED",
+        actorType: actor.source === "DOCTOR" ? "DOCTOR" : "PATIENT",
+        actorUserId: actor.userId,
+        subjectPatientId: patientId,
+        resourceType: "MEDICAL_RECORD",
+        resourceId: record.id,
+        metadata: { categorySlug: input.categorySlug, occurredOn: input.occurredOn.toISOString().slice(0, 10), fileCount: stored ? 1 : 0 },
+      },
+      ctx,
+    );
     return { ok: true, data: { recordId: record.id } };
   } catch (error) {
     // Si falla la base, no dejar el archivo huérfano en el storage.
@@ -91,17 +109,30 @@ export async function createRecord(patientId: string, actor: Actor, input: Recor
  * Borra el registro y sus archivos. Devuelve false si no existe, no pertenece al paciente
  * o no fue cargado por el paciente (los informes de médicos no se pueden borrar).
  */
-export async function deleteRecord(patientId: string, recordId: string): Promise<boolean> {
+export async function deleteRecord(patientId: string, recordId: string, actorUserId: string | null = null, ctx: AuditContext = {}): Promise<boolean> {
   const record = await db.medicalRecord.findFirst({
     where: { id: recordId, patientId, source: "PATIENT", report: null },
-    select: { id: true, files: { select: { storageKey: true } } },
+    select: { id: true, occurredOn: true, category: { select: { slug: true } }, files: { select: { storageKey: true } } },
   });
   if (!record) return false;
   await db.medicalRecord.delete({ where: { id: record.id } });
+  // Se guarda categoría y fecha (no el título) para que el paciente reconozca qué borró.
+  await audit(
+    {
+      action: "RECORD_DELETED",
+      actorType: "PATIENT",
+      actorUserId,
+      subjectPatientId: patientId,
+      resourceType: "MEDICAL_RECORD",
+      resourceId: record.id,
+      metadata: { categorySlug: record.category.slug, occurredOn: record.occurredOn.toISOString().slice(0, 10), fileCount: record.files.length },
+    },
+    ctx,
+  );
   for (const f of record.files) {
     await getStorage()
       .delete(f.storageKey)
-      .catch((error) => console.error("[storage] No se pudo borrar", f.storageKey, error));
+      .catch((error) => console.error("[storage] No se pudo borrar un archivo", error instanceof Error ? error.message : "error"));
   }
   return true;
 }
@@ -128,7 +159,7 @@ const recordDetailSelect = {
       specialty: true,
       currentVersion: true,
       createdAt: true,
-      versions: { orderBy: { version: "desc" as const }, select: { version: true, title: true, content: true, changeReason: true, createdAt: true } },
+      versions: { orderBy: { version: "desc" as const }, select: { version: true, title: true, content: true, changeReason: true, createdAt: true, createdBy: { select: { firstName: true, lastName: true } } } },
     },
   },
   files: { select: { id: true, originalName: true, mimeType: true, sizeBytes: true, createdAt: true }, orderBy: { createdAt: "asc" as const } },

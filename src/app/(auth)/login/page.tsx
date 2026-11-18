@@ -9,10 +9,15 @@ export const metadata: Metadata = { title: "Ingresar" };
 
 export default async function LoginPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   await redirectIfAuthenticated();
-  const { reset } = await searchParams;
+  const { reset, verified } = await searchParams;
   return (
     <>
       <AuthHeading title="Bienvenido de nuevo" description="Ingresá a tu cuenta para continuar." />
+      {verified === "1" ? (
+        <Alert tone="success" className="mb-5">
+          Tu email quedó verificado. Ya podés ingresar.
+        </Alert>
+      ) : null}
       {reset === "1" ? (
         <Alert tone="success" className="mb-5">
           Tu contraseña se actualizó. Ya podés ingresar.

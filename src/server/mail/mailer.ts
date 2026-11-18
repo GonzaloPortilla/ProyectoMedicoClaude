@@ -10,10 +10,15 @@ export type MailMessage = { to: string; subject: string; text: string };
  * detrás de esta misma función.
  */
 export async function sendMail(message: MailMessage): Promise<void> {
-  const transport = process.env.MAIL_TRANSPORT ?? (process.env.NODE_ENV === "production" ? "disabled" : "console");
+  const transport = process.env.MAIL_TRANSPORT ?? (process.env.NODE_ENV === "production" ? "unconfigured" : "console");
+  if (transport === "disabled") return; // p. ej. en tests
   if (transport !== "console") {
     console.warn(`[mail] Sin proveedor de email configurado. Mensaje para ${maskEmail(message.to)} no enviado.`);
     return;
+  }
+  if (process.env.NODE_ENV === "production") {
+    // MAIL_TRANSPORT=console imprime enlaces de activación y recuperación: sólo para pruebas locales.
+    console.warn("[mail] ATENCIÓN: MAIL_TRANSPORT=console en producción. Los enlaces quedan en los logs del servidor.");
   }
   console.info(
     ["", "──────── [mail:dev] ────────", `Para: ${message.to}`, `Asunto: ${message.subject}`, "", message.text, "────────────────────────────", ""].join("\n"),

@@ -3,7 +3,7 @@ import type { AccessAction } from "@/generated/prisma/enums";
 import { db } from "@/server/db";
 import { consumeLinkCode } from "@/server/access/codes";
 import { activeGrantWhere } from "@/server/access/policy";
-import { logAccess } from "@/server/access/log";
+import { audit, type AuditContext } from "@/server/audit/log";
 import { HEALTH_SECTION_KEYS, resourceId, type ResourceRef } from "@/features/access/resources";
 
 export type Result<T> = { ok: true; data: T } | { ok: false; error: string; field?: string };
@@ -27,11 +27,16 @@ async function sanitizeResources(resources: ResourceRef[]): Promise<ResourceRef[
 export async function createAccessRequest(
   doctorUserId: string,
   input: { code: string; message: string | null; requested: ResourceRef[] },
+  ctx: AuditContext = {},
 ): Promise<Result<{ requestId: string }>> {
   if (!(await isVerifiedDoctor(doctorUserId))) return { ok: false, error: "Tu cuenta profesional tiene que estar verificada para solicitar accesos." };
 
   const patientId = await consumeLinkCode(input.code, doctorUserId);
-  if (!patientId) return { ok: false, field: "code", error: "El código no es válido, ya se usó o venció. Pedile uno nuevo al paciente." };
+  if (!patientId) {
+    // Sin paciente asociado: queda registrado como intento fallido del médico (sin el código).
+    await audit({ action: "ACCESS_REQUESTED", outcome: "FAILURE", actorType: "DOCTOR", actorUserId: doctorUserId, metadata: { reason: "invalid_code" } }, ctx);
+    return { ok: false, field: "code", error: "El código no es válido, ya se usó o venció. Pedile uno nuevo al paciente." };
+  }
 
   const patient = await db.patientProfile.findUnique({ where: { id: patientId }, select: { userId: true } });
   if (patient?.userId === doctorUserId) return { ok: false, field: "code", error: "No podés solicitar acceso a tu propia información." };
@@ -51,7 +56,10 @@ export async function createAccessRequest(
       select: { id: true },
     });
   });
-  await logAccess({ patientId, actorUserId: doctorUserId, action: "REQUEST_CREATED", resourceId: request.id });
+  await audit(
+    { action: "ACCESS_REQUESTED", actorType: "DOCTOR", actorUserId: doctorUserId, subjectPatientId: patientId, resourceType: "ACCESS_REQUEST", resourceId: request.id, metadata: { categories: requested.map(resourceId) } },
+    ctx,
+  );
   return { ok: true, data: { requestId: request.id } };
 }
 
@@ -78,13 +86,17 @@ export async function getPendingRequestForPatient(patientId: string, requestId: 
   });
 }
 
-export async function rejectRequest(patientId: string, requestId: string): Promise<boolean> {
+export async function rejectRequest(patientId: string, requestId: string, patientUserId: string | null = null, ctx: AuditContext = {}): Promise<boolean> {
   const { count } = await db.accessRequest.updateMany({ where: { id: requestId, patientId, ...pendingWhere() }, data: { status: "REJECTED", respondedAt: new Date() } });
+  if (count === 1) await audit({ action: "ACCESS_REJECTED", actorType: "PATIENT", actorUserId: patientUserId, subjectPatientId: patientId, resourceType: "ACCESS_REQUEST", resourceId: requestId }, ctx);
   return count === 1;
 }
 
-export async function cancelRequest(doctorUserId: string, requestId: string): Promise<boolean> {
+export async function cancelRequest(doctorUserId: string, requestId: string, ctx: AuditContext = {}): Promise<boolean> {
+  const request = await db.accessRequest.findFirst({ where: { id: requestId, doctorUserId, status: "PENDING" }, select: { patientId: true } });
+  if (!request) return false;
   const { count } = await db.accessRequest.updateMany({ where: { id: requestId, doctorUserId, status: "PENDING" }, data: { status: "CANCELLED", respondedAt: new Date() } });
+  if (count === 1) await audit({ action: "ACCESS_REQUEST_CANCELLED", actorType: "DOCTOR", actorUserId: doctorUserId, subjectPatientId: request.patientId, resourceType: "ACCESS_REQUEST", resourceId: requestId }, ctx);
   return count === 1;
 }
 
@@ -104,7 +116,7 @@ export function buildPermissions(input: Pick<ApprovalInput, "resources" | "allow
 }
 
 /** El paciente acepta: crea el grant con sus permisos y reemplaza cualquier grant vigente previo. */
-export async function approveRequest(patientId: string, patientUserId: string, requestId: string, input: ApprovalInput): Promise<Result<{ grantId: string }>> {
+export async function approveRequest(patientId: string, patientUserId: string, requestId: string, input: ApprovalInput, ctx: AuditContext = {}): Promise<Result<{ grantId: string }>> {
   const request = await db.accessRequest.findFirst({ where: { id: requestId, patientId, ...pendingWhere() }, select: { id: true, doctorUserId: true } });
   if (!request) return { ok: false, error: "La solicitud no existe o ya no está pendiente." };
   if (!(await isVerifiedDoctor(request.doctorUserId))) return { ok: false, error: "El profesional ya no está verificado." };
@@ -132,17 +144,35 @@ export async function approveRequest(patientId: string, patientUserId: string, r
     });
   });
   if (!grant) return { ok: false, error: "La solicitud ya fue respondida." };
-  await logAccess({ patientId, actorUserId: patientUserId, grantId: grant.id, action: "GRANT_CREATED" });
+  await audit(
+    {
+      action: "ACCESS_GRANTED",
+      actorType: "PATIENT",
+      actorUserId: patientUserId,
+      subjectPatientId: patientId,
+      resourceType: "ACCESS_GRANT",
+      resourceId: grant.id,
+      grantId: grant.id,
+      metadata: {
+        sections: resources.filter((r) => r.type === "HEALTH_SECTION").map((r) => r.key),
+        categories: resources.filter((r) => r.type === "RECORD_CATEGORY").map((r) => r.key),
+        allowCreate: input.allowCreate,
+        allowUpload: input.allowCreate && input.allowUpload,
+        expiresAt: input.expiresAt ? input.expiresAt.toISOString() : "permanent",
+      },
+    },
+    ctx,
+  );
   return { ok: true, data: { grantId: grant.id } };
 }
 
 /** Revocación inmediata: la próxima consulta del médico ya no encuentra un grant vigente. */
-export async function revokeGrant(patientId: string, patientUserId: string, grantId: string): Promise<boolean> {
+export async function revokeGrant(patientId: string, patientUserId: string, grantId: string, ctx: AuditContext = {}): Promise<boolean> {
   const { count } = await db.accessGrant.updateMany({
     where: { id: grantId, patientId, status: "ACTIVE" },
     data: { status: "REVOKED", revokedAt: new Date() },
   });
-  if (count === 1) await logAccess({ patientId, actorUserId: patientUserId, grantId, action: "GRANT_REVOKED" });
+  if (count === 1) await audit({ action: "ACCESS_REVOKED", actorType: "PATIENT", actorUserId: patientUserId, subjectPatientId: patientId, resourceType: "ACCESS_GRANT", resourceId: grantId, grantId }, ctx);
   return count === 1;
 }
 
@@ -166,11 +196,20 @@ export async function listGrantsForPatient(patientId: string) {
     select: {
       ...grantListSelect,
       doctor: { select: doctorPublicSelect },
-      logs: { where: { action: { in: ["VIEW_PATIENT", "VIEW_RECORD", "VIEW_FILE", "CREATE_REPORT", "CORRECT_REPORT"] } }, orderBy: { createdAt: "desc" }, take: 5, select: { action: true, createdAt: true } },
     },
   });
+  // Últimos accesos de cada médico (desde el registro de auditoría).
+  const events = grants.length
+    ? await db.auditEvent.findMany({
+        where: { grantId: { in: grants.map((g) => g.id) }, actorType: "DOCTOR", outcome: "SUCCESS", action: { in: ["PATIENT_SUMMARY_VIEWED", "RECORD_VIEWED", "FILE_VIEWED", "FILE_DOWNLOADED", "REPORT_CREATED", "REPORT_CORRECTED"] } },
+        orderBy: { seq: "desc" },
+        take: 200,
+        select: { grantId: true, action: true, createdAt: true },
+      })
+    : [];
   const isActive = (g: (typeof grants)[number]) => g.status === "ACTIVE" && !g.revokedAt && (!g.expiresAt || g.expiresAt > now) && g.doctor.doctorProfile?.verificationStatus === "VERIFIED";
-  return { active: grants.filter(isActive), past: grants.filter((g) => !isActive(g) && g.status !== "SUPERSEDED") };
+  const withLogs = grants.map((g) => ({ ...g, logs: events.filter((e) => e.grantId === g.id).slice(0, 5) }));
+  return { active: withLogs.filter(isActive), past: withLogs.filter((g) => !isActive(g) && g.status !== "SUPERSEDED") };
 }
 
 /** Pacientes con acceso vigente para el médico. */

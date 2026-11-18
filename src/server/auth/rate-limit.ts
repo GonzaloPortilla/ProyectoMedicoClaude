@@ -47,5 +47,11 @@ globalLimiters.__limiters ??= {
 
 // Intentos de código de vinculación por médico: evita adivinar códigos por fuerza bruta.
 globalLimiters.__limiters.linkCode ??= new RateLimiter(10, 15 * 60 * 1000);
+// Logins por IP (el bloqueo por cuenta vive en la base: ver authenticate()).
+globalLimiters.__limiters.loginIp ??= new RateLimiter(30, 15 * 60 * 1000);
+// Códigos de verificación en dos pasos por usuario.
+globalLimiters.__limiters.mfa ??= new RateLimiter(5, 15 * 60 * 1000);
+// Acciones sensibles de la configuración (cambio de contraseña, MFA, exportación).
+globalLimiters.__limiters.sensitive ??= new RateLimiter(10, 15 * 60 * 1000);
 
-export const limiters = globalLimiters.__limiters as Record<"login" | "register" | "passwordReset" | "linkCode", RateLimiter>;
+export const limiters = globalLimiters.__limiters as Record<"login" | "register" | "passwordReset" | "linkCode" | "loginIp" | "mfa" | "sensitive", RateLimiter>;

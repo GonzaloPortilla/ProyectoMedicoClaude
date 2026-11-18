@@ -7,6 +7,8 @@ import { emergencySettingsSchema, healthKindSchema, KIND_SCHEMAS, vitalsSchema }
 import { authorizePatient } from "@/server/patient/context";
 import { addHealthEntry, deleteHealthEntry } from "@/server/medical/health";
 import { db } from "@/server/db";
+import { audit } from "@/server/audit/log";
+import { requestContext } from "@/server/audit/request";
 
 const FORBIDDEN: FormState = { status: "error", message: "No tenés permiso para realizar esta acción." };
 
@@ -34,6 +36,7 @@ export async function addHealthEntryAction(_prev: FormState, formData: FormData)
   }
 
   await addHealthEntry(ctx.patientId, { userId: ctx.user.id, source: "PATIENT" }, kind.data, parsed.data);
+  await audit({ action: "HEALTH_ENTRY_CREATED", actorType: "PATIENT", actorUserId: ctx.user.id, subjectPatientId: ctx.patientId, resourceType: "HEALTH_ENTRY", metadata: { kind: kind.data } }, await requestContext());
   revalidate();
   return { status: "success", message: "Guardado." };
 }
@@ -44,7 +47,10 @@ export async function deleteHealthEntryAction(formData: FormData): Promise<void>
   const kind = healthKindSchema.safeParse(formData.get("kind"));
   const id = formData.get("id");
   if (!kind.success || typeof id !== "string" || id.length > 64) return;
-  await deleteHealthEntry(ctx.patientId, kind.data, id);
+  const deleted = await deleteHealthEntry(ctx.patientId, kind.data, id);
+  if (deleted) {
+    await audit({ action: "HEALTH_ENTRY_DELETED", actorType: "PATIENT", actorUserId: ctx.user.id, subjectPatientId: ctx.patientId, resourceType: "HEALTH_ENTRY", resourceId: id, metadata: { kind: kind.data } }, await requestContext());
+  }
   revalidate();
 }
 
@@ -58,6 +64,7 @@ export async function saveVitalsAction(_prev: FormState, formData: FormData): Pr
   });
   if (!parsed.success) return { status: "error", fieldErrors: zodFieldErrors(parsed.error), values: safeValues(formData) };
   await db.healthProfile.upsert({ where: { patientId: ctx.patientId }, create: { patientId: ctx.patientId, ...parsed.data }, update: parsed.data });
+  await audit({ action: "PROFILE_UPDATED", actorType: "PATIENT", actorUserId: ctx.user.id, subjectPatientId: ctx.patientId, resourceType: "HEALTH_PROFILE", metadata: { kind: "vitals", fields: Object.keys(parsed.data) } }, await requestContext());
   revalidate();
   return { status: "success", message: "Datos actualizados." };
 }
@@ -69,6 +76,14 @@ export async function saveEmergencySettingsAction(_prev: FormState, formData: Fo
   const parsed = emergencySettingsSchema.safeParse(Object.fromEntries(keys.map((k) => [k, formData.get(k) ?? undefined])));
   if (!parsed.success) return { status: "error", fieldErrors: zodFieldErrors(parsed.error) };
   await db.emergencyProfile.upsert({ where: { patientId: ctx.patientId }, create: { patientId: ctx.patientId, ...parsed.data }, update: parsed.data });
+  await audit({
+    action: "EMERGENCY_SETTINGS_UPDATED",
+    actorType: "PATIENT",
+    actorUserId: ctx.user.id,
+    subjectPatientId: ctx.patientId,
+    resourceType: "EMERGENCY_PROFILE",
+    metadata: { sections: Object.entries(parsed.data).filter(([k, v]) => k.startsWith("show") && v === true).map(([k]) => k) },
+  }, await requestContext());
   revalidate();
   return { status: "success", message: "Preferencias de emergencia guardadas." };
 }

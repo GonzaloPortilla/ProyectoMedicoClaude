@@ -72,7 +72,7 @@ export async function getRecordForDoctor(access: DoctorAccess, recordId: string)
           specialty: true,
           currentVersion: true,
           createdAt: true,
-          versions: { orderBy: { version: "desc" }, select: { version: true, title: true, content: true, changeReason: true, createdAt: true } },
+          versions: { orderBy: { version: "desc" }, select: { version: true, title: true, content: true, changeReason: true, createdAt: true, createdBy: { select: { firstName: true, lastName: true } } } },
         },
       },
     },

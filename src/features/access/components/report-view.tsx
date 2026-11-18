@@ -10,7 +10,7 @@ type Report = {
   specialty: string;
   currentVersion: number;
   createdAt: Date;
-  versions: { version: number; title: string; content: string; changeReason: string | null; createdAt: Date }[];
+  versions: { version: number; title: string; content: string; changeReason: string | null; createdAt: Date; createdBy?: { firstName: string; lastName: string } | null }[];
 };
 
 /** Informe médico firmado, con historial de versiones (nunca se pierde una versión anterior). */
@@ -39,7 +39,7 @@ export function ReportView({ report }: { report: Report }) {
       <div className="px-5 py-5 sm:px-6">
         <p className="mb-3 text-[13px] text-muted">
           Emitido el {formatDateTime(report.createdAt)}
-          {report.currentVersion > 1 ? ` · última corrección el ${formatDateTime(current.createdAt)}` : ""}
+          {report.currentVersion > 1 ? ` · versión ${current.version} del ${formatDateTime(current.createdAt)}${current.createdBy ? ` por Dr/a. ${current.createdBy.firstName} ${current.createdBy.lastName}` : ""}` : ""}
         </p>
         <div className="text-sm leading-relaxed break-words whitespace-pre-line text-ink" data-testid="report-content">
           {current.content}
@@ -59,6 +59,7 @@ export function ReportView({ report }: { report: Report }) {
                 <li key={v.version} className="rounded-xl bg-canvas/70 p-4 ring-1 ring-line ring-inset">
                   <p className="mb-2 flex flex-wrap items-center gap-2 text-[13px] text-muted">
                     <Badge>Versión {v.version}</Badge> {v.title} · {formatDateTime(v.createdAt)}
+                    {v.createdBy ? ` · Dr/a. ${v.createdBy.firstName} ${v.createdBy.lastName}` : ""}
                   </p>
                   <p className="text-[13px] leading-relaxed break-words whitespace-pre-line text-ink-soft">{v.content}</p>
                   {v.changeReason ? <p className="mt-2 text-[12px] text-muted">Motivo: {v.changeReason}</p> : null}

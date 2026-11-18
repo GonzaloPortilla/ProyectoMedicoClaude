@@ -6,6 +6,8 @@ import { formObject, zodFieldErrors, type FormState } from "@/lib/form";
 import { doctorDecisionSchema, doctorStatusFilterSchema } from "@/features/admin/schemas";
 import { authorizeRole } from "@/server/auth/dal";
 import { db } from "@/server/db";
+import { audit } from "@/server/audit/log";
+import { requestContext } from "@/server/audit/request";
 
 export async function decideDoctorVerificationAction(_prev: FormState, formData: FormData): Promise<FormState> {
   const admin = await authorizeRole("ADMIN");
@@ -34,6 +36,7 @@ export async function decideDoctorVerificationAction(_prev: FormState, formData:
     }),
   ]);
 
+  await audit({ action: "DOCTOR_VERIFICATION_DECIDED", actorType: "ADMIN", actorUserId: admin.id, resourceType: "DOCTOR_PROFILE", resourceId: profile.id, metadata: { decision } }, await requestContext());
   revalidatePath("/admin", "layout");
   // La tarjeta puede desaparecer del filtro actual, así que el aviso se muestra a nivel de página.
   const returnTo = doctorStatusFilterSchema.parse(formData.get("returnTo"));

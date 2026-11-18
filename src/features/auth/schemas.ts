@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { JURISDICTION_CODES } from "@/lib/jurisdictions";
+import { COMMON_PASSWORDS } from "@/lib/common-passwords";
 
 // Esquemas compartidos entre cliente (UX) y servidor (fuente de verdad).
 
@@ -15,7 +16,8 @@ export const passwordSchema = z
   .min(8, "Usá al menos 8 caracteres")
   .max(128, "Usá como máximo 128 caracteres")
   .regex(/[A-Za-zÀ-ÿ]/, "Incluí al menos una letra")
-  .regex(/\d/, "Incluí al menos un número");
+  .regex(/\d/, "Incluí al menos un número")
+  .refine((v) => !COMMON_PASSWORDS.has(v.toLowerCase()), "Esa contraseña es demasiado común. Elegí otra.");
 
 const nameSchema = (label: string) =>
   z
@@ -25,9 +27,13 @@ const nameSchema = (label: string) =>
     .max(80, `El ${label} es demasiado largo`)
     .regex(/^[\p{L}\p{M}' .-]+$/u, `El ${label} contiene caracteres no válidos`);
 
-const passwordConfirmation = <T extends { password: string; confirmPassword: string }>(data: T, ctx: z.RefinementCtx) => {
+const passwordConfirmation = <T extends { password: string; confirmPassword: string; email?: string }>(data: T, ctx: z.RefinementCtx) => {
   if (data.password !== data.confirmPassword) {
     ctx.addIssue({ code: "custom", path: ["confirmPassword"], message: "Las contraseñas no coinciden" });
+  }
+  const local = data.email?.split("@")[0];
+  if (local && local.length >= 4 && data.password.toLowerCase().includes(local.toLowerCase())) {
+    ctx.addIssue({ code: "custom", path: ["password"], message: "La contraseña no puede contener tu email" });
   }
 };
 
@@ -80,3 +86,23 @@ export const resetPasswordSchema = z
 
 export type RegisterPatientInput = z.infer<typeof registerPatientSchema>;
 export type RegisterDoctorInput = z.infer<typeof registerDoctorSchema>;
+
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, "Ingresá tu contraseña actual").max(128),
+    password: passwordSchema,
+    confirmPassword: z.string(),
+  })
+  .superRefine(passwordConfirmation)
+  .refine((d) => d.currentPassword !== d.password, { path: ["password"], message: "La nueva contraseña tiene que ser distinta de la actual" });
+
+export const mfaCodeSchema = z
+  .string({ error: "Ingresá el código" })
+  .trim()
+  .transform((v) => v.replace(/\s/g, ""))
+  .refine((v) => /^\d{6}$/.test(v) || /^[a-z2-7]{4}-?[a-z2-7]{4}$/i.test(v), "Ingresá el código de 6 dígitos o un código de recuperación");
+
+export const profileNameSchema = z.object({
+  firstName: nameSchema("nombre"),
+  lastName: nameSchema("apellido"),
+});

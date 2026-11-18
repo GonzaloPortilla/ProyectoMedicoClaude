@@ -35,6 +35,7 @@ async function main() {
     create: {
       email: "admin@demo.local",
       passwordHash,
+      emailVerifiedAt: new Date(),
       firstName: "Admin",
       lastName: "Demo",
       roles: { create: { role: "ADMIN" } },
@@ -47,6 +48,7 @@ async function main() {
     create: {
       email: "martin@demo.local",
       passwordHash,
+      emailVerifiedAt: new Date(),
       firstName: "Martín",
       lastName: "Demo",
       roles: { create: { role: "PATIENT" } },
@@ -70,6 +72,7 @@ async function main() {
     create: {
       email: "juan.perez@demo.local",
       passwordHash,
+      emailVerifiedAt: new Date(),
       firstName: "Juan",
       lastName: "Pérez",
       roles: { create: { role: "DOCTOR" } },
@@ -98,6 +101,7 @@ async function main() {
     create: {
       email: "laura.gomez@demo.local",
       passwordHash,
+      emailVerifiedAt: new Date(),
       firstName: "Laura",
       lastName: "Gómez",
       roles: { create: { role: "DOCTOR" } },
@@ -119,6 +123,7 @@ async function main() {
     create: {
       email: "carla@demo.local",
       passwordHash,
+      emailVerifiedAt: new Date(),
       firstName: "Carla",
       lastName: "Demo",
       roles: { create: { role: "PATIENT" } },
@@ -378,13 +383,16 @@ async function seedAccessDemo(martinUserId: string, carlaUserId: string, doctorU
       },
     },
   });
-  await db.accessLog.createMany({
-    data: [
-      { patientId: martin.id, actorUserId: martinUserId, grantId: grant.id, action: "GRANT_CREATED" },
-      { patientId: martin.id, actorUserId: doctorUserId, grantId: grant.id, action: "VIEW_PATIENT" },
-      { patientId: martin.id, actorUserId: doctorUserId, grantId: grant.id, action: "CREATE_REPORT" },
-    ],
-  });
+  // Actividad de demo en el registro de auditoría (el trigger de la base encadena cada evento).
+  const demoEvents = [
+    { action: "ACCESS_GRANTED" as const, actorType: "PATIENT" as const, actorUserId: martinUserId, resourceType: "ACCESS_GRANT", resourceId: grant.id, metadata: { sections: ["GENERAL", "ALLERGIES", "MEDICATIONS", "CONDITIONS"], categories: ["laboratorio", "cardiologia"], allowCreate: true, expiresAt: grant.expiresAt!.toISOString() } },
+    { action: "PATIENT_SUMMARY_VIEWED" as const, actorType: "DOCTOR" as const, actorUserId: doctorUserId, resourceType: "PATIENT", resourceId: martin.id },
+    { action: "REPORT_CREATED" as const, actorType: "DOCTOR" as const, actorUserId: doctorUserId, resourceType: "MEDICAL_RECORD", resourceId: record.id, metadata: { categorySlug: "cardiologia", toVersion: 1 } },
+    { action: "REPORT_CORRECTED" as const, actorType: "DOCTOR" as const, actorUserId: doctorUserId, resourceType: "MEDICAL_RECORD", resourceId: record.id, metadata: { categorySlug: "cardiologia", fromVersion: 1, toVersion: 2 } },
+  ];
+  for (const e of demoEvents) {
+    await db.auditEvent.create({ data: { ...e, subjectPatientId: martin.id, grantId: grant.id } });
+  }
 
   // Solicitud pendiente del Dr. Pérez a Carla (para probar aceptar / rechazar).
   await db.accessRequest.create({

@@ -46,9 +46,10 @@ export function isExpiringSoon(expiresAt: Date | null, now: Date = new Date()) {
 }
 
 export const ACCESS_LOG_LABELS: Record<string, string> = {
-  VIEW_PATIENT: "Vio tu resumen",
-  VIEW_RECORD: "Abrió un registro",
-  VIEW_FILE: "Abrió un archivo",
-  CREATE_REPORT: "Creó un informe",
-  CORRECT_REPORT: "Corrigió un informe",
+  PATIENT_SUMMARY_VIEWED: "Vio tu resumen",
+  RECORD_VIEWED: "Abrió un registro",
+  FILE_VIEWED: "Abrió un archivo",
+  FILE_DOWNLOADED: "Descargó un archivo",
+  REPORT_CREATED: "Creó un informe",
+  REPORT_CORRECTED: "Corrigió un informe",
 };

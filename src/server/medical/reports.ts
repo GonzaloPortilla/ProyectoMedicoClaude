@@ -2,7 +2,9 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { db } from "@/server/db";
 import { can, type DoctorAccess } from "@/server/access/policy";
-import { logAccess } from "@/server/access/log";
+import { audit, type AuditContext } from "@/server/audit/log";
+import { stripMetadata } from "@/server/files/sanitize";
+import { scanFile } from "@/server/files/scan";
 import { getStorage, newStorageKey } from "@/server/storage";
 import { validateUpload } from "@/server/files/validation";
 import { normalizeText } from "@/lib/text";
@@ -27,6 +29,7 @@ export async function createReport(
   access: DoctorAccess,
   input: { categorySlug: string; title: string; content: string },
   file?: UploadedFile | null,
+  ctx: AuditContext = {},
 ): Promise<Result<{ recordId: string; reportId: string }>> {
   if (!can(access, "CREATE_MEDICAL_ENTRY", "RECORD_CATEGORY", input.categorySlug)) {
     return { ok: false, field: "categorySlug", error: "No tenés permiso para crear informes en esta categoría." };
@@ -46,7 +49,9 @@ export async function createReport(
     const check = validateUpload(file.name, file.size, file.bytes);
     if (!check.ok) return { ok: false, field: "file", error: check.error };
     const key = newStorageKey();
-    const buffer = Buffer.from(file.bytes);
+    const buffer = stripMetadata(check.mime, Buffer.from(file.bytes));
+    const scan = await scanFile(buffer, check.mime);
+    if (!scan.clean) return { ok: false, field: "file", error: "El archivo no superó el control de seguridad." };
     await getStorage().put(key, buffer, check.mime);
     stored = { key, mime: check.mime, safeName: check.safeName, size: buffer.length, sha256: createHash("sha256").update(buffer).digest("hex") };
   }
@@ -87,7 +92,19 @@ export async function createReport(
       });
       return { recordId: record.id, reportId: report.id };
     });
-    await logAccess({ patientId: access.patientId, actorUserId: access.doctorUserId, grantId: access.grantId, action: "CREATE_REPORT", resourceId: result.reportId });
+    await audit(
+      {
+        action: "REPORT_CREATED",
+        actorType: "DOCTOR",
+        actorUserId: access.doctorUserId,
+        subjectPatientId: access.patientId,
+        resourceType: "MEDICAL_RECORD",
+        resourceId: result.recordId,
+        grantId: access.grantId,
+        metadata: { categorySlug: input.categorySlug, toVersion: 1, fileCount: stored ? 1 : 0 },
+      },
+      ctx,
+    );
     return { ok: true, data: result };
   } catch (error) {
     if (stored) await getStorage().delete(stored.key).catch(() => {});
@@ -99,6 +116,7 @@ export async function createReport(
 export async function correctReport(
   access: DoctorAccess,
   input: { reportId: string; title: string; content: string; changeReason: string },
+  ctx: AuditContext = {},
 ): Promise<Result<{ recordId: string; version: number }>> {
   const report = await db.medicalReport.findFirst({
     where: { id: input.reportId, patientId: access.patientId, authorUserId: access.doctorUserId },
@@ -121,6 +139,18 @@ export async function correctReport(
       data: { title: input.title, searchText: searchTextFor(input.title, report.record.category.name, report.specialty, report.authorName, input.content) },
     });
   });
-  await logAccess({ patientId: access.patientId, actorUserId: access.doctorUserId, grantId: access.grantId, action: "CORRECT_REPORT", resourceId: report.id });
+  await audit(
+    {
+      action: "REPORT_CORRECTED",
+      actorType: "DOCTOR",
+      actorUserId: access.doctorUserId,
+      subjectPatientId: access.patientId,
+      resourceType: "MEDICAL_RECORD",
+      resourceId: report.recordId,
+      grantId: access.grantId,
+      metadata: { categorySlug: report.record.category.slug, fromVersion: report.currentVersion, toVersion: next },
+    },
+    ctx,
+  );
   return { ok: true, data: { recordId: report.recordId, version: next } };
 }

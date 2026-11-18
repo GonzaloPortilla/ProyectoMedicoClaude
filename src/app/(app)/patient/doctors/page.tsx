@@ -15,11 +15,13 @@ import { getActiveLinkCode } from "@/server/access/codes";
 import { listGrantsForPatient, listPendingRequestsForPatient } from "@/server/access/requests";
 import { listActiveCategories } from "@/server/medical/records";
 import { requirePatient } from "@/server/patient/context";
+import { sweepExpiredGrants } from "@/server/access/expiry";
 
 export const metadata: Metadata = { title: "Mis médicos" };
 
 export default async function PatientDoctorsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { patientId } = await requirePatient();
+  await sweepExpiredGrants();
   const [linkCode, pending, grants, categories, params] = await Promise.all([
     getActiveLinkCode(patientId),
     listPendingRequestsForPatient(patientId),
@@ -134,7 +136,7 @@ export default async function PatientDoctorsPage({ searchParams }: { searchParam
                     <Card className="flex flex-col gap-2 p-4 opacity-80 sm:flex-row sm:items-center sm:justify-between">
                       <DoctorIdentity doctor={g.doctor} />
                       <Badge tone={g.status === "REVOKED" ? "red" : "neutral"}>
-                        {g.status === "REVOKED" ? `Revocado ${g.revokedAt ? formatDateTime(g.revokedAt) : ""}` : g.expiresAt ? `Venció ${formatDateTime(g.expiresAt)}` : "Inactivo"}
+                        {g.status === "REVOKED" ? `Revocado ${g.revokedAt ? formatDateTime(g.revokedAt) : ""}` : g.expiresAt && g.expiresAt <= new Date() ? `Venció ${formatDateTime(g.expiresAt)}` : "Inactivo (profesional no verificado)"}
                       </Badge>
                     </Card>
                   </li>

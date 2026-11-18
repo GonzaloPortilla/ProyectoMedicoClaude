@@ -1,9 +1,9 @@
 import "server-only";
 import { hash, verify } from "@node-rs/argon2";
 
-// Argon2id (algoritmo por defecto de @node-rs/argon2) con parámetros
-// recomendados por OWASP: 19 MiB de memoria, 2 iteraciones, 1 hilo.
-const ARGON2_OPTIONS = {
+// Argon2id (algoritmo por defecto de @node-rs/argon2) con parámetros recomendados por
+// OWASP: 19 MiB de memoria, 2 iteraciones, 1 hilo.
+export const ARGON2_OPTIONS = {
   memoryCost: 19456,
   timeCost: 2,
   parallelism: 1,
@@ -20,6 +20,17 @@ export async function verifyPassword(passwordHash: string, password: string): Pr
   } catch {
     return false;
   }
+}
+
+/**
+ * ¿El hash se generó con parámetros más débiles que los actuales (o con otro algoritmo)?
+ * Si es así, se vuelve a hashear en el próximo login exitoso.
+ */
+export function needsRehash(passwordHash: string): boolean {
+  const m = /^\$argon2id\$v=19\$m=(\d+),t=(\d+),p=(\d+)\$/.exec(passwordHash);
+  if (!m) return true;
+  const [, mem, time, par] = m.map(Number);
+  return mem! < ARGON2_OPTIONS.memoryCost || time! < ARGON2_OPTIONS.timeCost || par !== ARGON2_OPTIONS.parallelism;
 }
 
 // Hash de referencia para igualar el tiempo de respuesta cuando el usuario no existe

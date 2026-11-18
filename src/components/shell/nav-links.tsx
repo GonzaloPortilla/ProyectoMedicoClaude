@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BadgeCheck, CalendarClock, FileText, HeartPulse, House, LayoutDashboard, Search, Siren, Stethoscope, UserRound, UserRoundCheck, Users } from "lucide-react";
+import { Activity, BadgeCheck, CalendarClock, Settings, FileText, HeartPulse, House, LayoutDashboard, Search, Siren, Stethoscope, UserRound, UserRoundCheck, Users } from "lucide-react";
 import type { NavIcon, NavItem, NavSection } from "@/components/shell/nav-config";
 import { cn } from "@/lib/utils";
 
@@ -19,11 +19,16 @@ const ICONS: Record<NavIcon, typeof House> = {
   emergency: Siren,
   search: Search,
   doctors: UserRoundCheck,
+  activity: Activity,
+  settings: Settings,
 };
 
 function useIsActive() {
   const pathname = usePathname();
-  return (item: NavItem) => (item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`));
+  return (item: NavItem) => {
+    if (item.exclude?.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return false;
+    return item.exact ? pathname === item.href : pathname === item.href || pathname.startsWith(`${item.href}/`);
+  };
 }
 
 export function SidebarNav({ sections }: { sections: NavSection[] }) {
@@ -31,7 +36,7 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
   return (
     <nav aria-label="Navegación principal" className="space-y-6">
       {sections.map((section) => (
-        <div key={section.role}>
+        <div key={section.key}>
           {sections.length > 1 ? <p className="mb-1.5 px-3 text-[11px] font-semibold tracking-wider text-muted uppercase">{section.title}</p> : null}
           <ul className="space-y-0.5">
             {section.items.map((item) => {

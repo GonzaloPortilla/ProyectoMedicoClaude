@@ -1,13 +1,15 @@
 import type { Role } from "@/generated/prisma/enums";
 
-export type NavIcon = "home" | "profile" | "doctor" | "overview" | "users" | "verify" | "health" | "documents" | "history" | "emergency" | "search" | "doctors";
-export type NavItem = { href: string; label: string; icon: NavIcon; exact?: boolean };
-export type NavSection = { role: Role; title: string; items: NavItem[] };
+export type NavIcon = "home" | "profile" | "doctor" | "overview" | "users" | "verify" | "health" | "documents" | "history" | "emergency" | "search" | "doctors" | "activity" | "settings";
+export type NavItem = { href: string; label: string; icon: NavIcon; exact?: boolean; exclude?: string[] };
+/** `role` ausente = sección visible para cualquier usuario autenticado. */
+export type NavSection = { role?: Role; key: string; title: string; items: NavItem[] };
 
 // Sólo controla qué enlaces se muestran: la autorización real está en cada layout/página.
 export const NAV_SECTIONS: NavSection[] = [
   {
     role: "PATIENT",
+    key: "patient",
     title: "Paciente",
     items: [
       { href: "/patient", label: "Inicio", icon: "home", exact: true },
@@ -22,16 +24,26 @@ export const NAV_SECTIONS: NavSection[] = [
   },
   {
     role: "DOCTOR",
+    key: "doctor",
     title: "Profesional",
     items: [{ href: "/doctor", label: "Panel profesional", icon: "doctor" }],
   },
   {
     role: "ADMIN",
+    key: "admin",
     title: "Administración",
     items: [
       { href: "/admin", label: "Resumen", icon: "overview", exact: true },
       { href: "/admin/users", label: "Usuarios", icon: "users" },
       { href: "/admin/doctors", label: "Médicos", icon: "verify" },
+    ],
+  },
+  {
+    key: "account",
+    title: "Cuenta",
+    items: [
+      { href: "/settings/activity", label: "Actividad", icon: "activity" },
+      { href: "/settings", label: "Configuración", icon: "settings", exclude: ["/settings/activity"] },
     ],
   },
 ];

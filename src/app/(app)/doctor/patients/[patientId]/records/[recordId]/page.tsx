@@ -12,7 +12,9 @@ import { CorrectReportForm } from "@/features/doctor/components/correct-report-f
 import { can } from "@/server/access/policy";
 import { getRecordForDoctor } from "@/server/access/doctor-view";
 import { requireDoctorAccess } from "@/server/doctor/context";
-import { logAccess } from "@/server/access/log";
+import { audit } from "@/server/audit/log";
+import { requestContext } from "@/server/audit/request";
+import { signedFileUrl } from "@/server/files/urls";
 import { formatBytes } from "@/lib/text";
 import { formatDate } from "@/lib/utils";
 
@@ -30,7 +32,10 @@ export default async function DoctorRecordPage({
   // Sólo se devuelve si es de ESTE paciente y de una categoría autorizada.
   const record = await getRecordForDoctor(access, recordId);
   if (!record) notFound();
-  await logAccess({ patientId, actorUserId: user.id, grantId: access.grantId, action: "VIEW_RECORD", resourceId: record.id });
+  await audit(
+    { action: "RECORD_VIEWED", actorType: "DOCTOR", actorUserId: user.id, subjectPatientId: patientId, resourceType: "MEDICAL_RECORD", resourceId: record.id, grantId: access.grantId, metadata: { categorySlug: record.category.slug } },
+    await requestContext(),
+  );
 
   const current = record.report?.versions[0];
   const canCorrect = !!record.report && record.report.authorUserId === user.id && can(access, "CREATE_MEDICAL_ENTRY", "RECORD_CATEGORY", record.category.slug);
@@ -108,7 +113,7 @@ export default async function DoctorRecordPage({
                       <p className="truncate text-sm font-medium text-ink">{f.originalName}</p>
                       <p className="text-xs text-muted">{formatBytes(f.sizeBytes)}</p>
                     </div>
-                    <a href={`/api/files/${f.id}`} target="_blank" rel="noopener noreferrer" className={buttonClasses({ variant: "secondary", size: "sm" })}>
+                    <a href={signedFileUrl(user.id, f.id)} target="_blank" rel="noopener noreferrer" className={buttonClasses({ variant: "secondary", size: "sm" })}>
                       <ExternalLink className="size-3.5" /> Ver
                     </a>
                   </li>

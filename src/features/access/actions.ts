@@ -13,6 +13,8 @@ import { getDoctorAccess } from "@/server/access/policy";
 import { correctReport, createReport } from "@/server/medical/reports";
 import { limiters } from "@/server/auth/rate-limit";
 import { MAX_FILE_BYTES } from "@/server/files/validation";
+import { audit } from "@/server/audit/log";
+import { requestContext } from "@/server/audit/request";
 
 const FORBIDDEN: FormState = { status: "error", message: "No tenés permiso para realizar esta acción." };
 const str = (v: FormDataEntryValue | null) => (typeof v === "string" ? v : "");
@@ -25,6 +27,8 @@ export async function generateLinkCodeAction(): Promise<LinkCodeState> {
   const ctx = await authorizePatient();
   if (!ctx) return { error: "No tenés permiso para realizar esta acción." };
   const { code, expiresAt } = await generateLinkCode(ctx.patientId);
+  // Se registra la creación, nunca el código.
+  await audit({ action: "LINK_CODE_CREATED", actorType: "PATIENT", actorUserId: ctx.user.id, subjectPatientId: ctx.patientId, resourceType: "LINK_CODE" }, await requestContext());
   revalidatePath("/patient/doctors");
   return { code, expiresAt: expiresAt.toISOString() };
 }
@@ -40,7 +44,7 @@ export async function cancelLinkCodeAction(): Promise<LinkCodeState> {
 export async function rejectRequestAction(formData: FormData): Promise<void> {
   const ctx = await authorizePatient();
   if (!ctx) redirect("/login");
-  await rejectRequest(ctx.patientId, str(formData.get("requestId")).slice(0, 64));
+  await rejectRequest(ctx.patientId, str(formData.get("requestId")).slice(0, 64), ctx.user.id, await requestContext());
   revalidatePath("/patient", "layout");
   redirect("/patient/doctors?rejected=1");
 }
@@ -60,7 +64,7 @@ export async function approveRequestAction(_prev: FormState, formData: FormData)
   const expiresAt = computeExpiry(parsed.data.duration as DurationValue, parsed.data.customDate ?? null);
   if (expiresAt === "invalid") return { status: "error", fieldErrors: { customDate: ["Elegí una fecha futura (máximo 2 años)"] } };
 
-  const result = await approveRequest(ctx.patientId, ctx.user.id, parsed.data.requestId, { ...parsed.data, expiresAt });
+  const result = await approveRequest(ctx.patientId, ctx.user.id, parsed.data.requestId, { ...parsed.data, expiresAt }, await requestContext());
   if (!result.ok) return { status: "error", ...(result.field ? { fieldErrors: { [result.field]: [result.error] } } : { message: result.error }) };
   revalidatePath("/patient", "layout");
   redirect("/patient/doctors?approved=1");
@@ -69,7 +73,7 @@ export async function approveRequestAction(_prev: FormState, formData: FormData)
 export async function revokeGrantAction(formData: FormData): Promise<void> {
   const ctx = await authorizePatient();
   if (!ctx) redirect("/login");
-  const ok = await revokeGrant(ctx.patientId, ctx.user.id, str(formData.get("grantId")).slice(0, 64));
+  const ok = await revokeGrant(ctx.patientId, ctx.user.id, str(formData.get("grantId")).slice(0, 64), await requestContext());
   revalidatePath("/patient", "layout");
   redirect(ok ? "/patient/doctors?revoked=1" : "/patient/doctors");
 }
@@ -86,7 +90,7 @@ export async function requestAccessAction(_prev: FormState, formData: FormData):
   if (!limiters.linkCode.consume(doctor.id).allowed) {
     return { status: "error", message: "Demasiados intentos. Esperá unos minutos y volvé a probar.", values };
   }
-  const result = await createAccessRequest(doctor.id, parsed.data);
+  const result = await createAccessRequest(doctor.id, parsed.data, await requestContext());
   if (!result.ok) return { status: "error", values, ...(result.field ? { fieldErrors: { [result.field]: [result.error] } } : { message: result.error }) };
   revalidatePath("/doctor");
   return { status: "success", message: "Solicitud enviada. El paciente la verá en “Mis médicos” para aceptarla y elegir qué compartir." };
@@ -95,7 +99,7 @@ export async function requestAccessAction(_prev: FormState, formData: FormData):
 export async function cancelRequestAction(formData: FormData): Promise<void> {
   const doctor = await authorizeVerifiedDoctor();
   if (!doctor) redirect("/login");
-  await cancelRequest(doctor.id, str(formData.get("requestId")).slice(0, 64));
+  await cancelRequest(doctor.id, str(formData.get("requestId")).slice(0, 64), await requestContext());
   revalidatePath("/doctor");
 }
 
@@ -117,7 +121,7 @@ export async function createReportAction(_prev: FormState, formData: FormData): 
     if (file.size > MAX_FILE_BYTES) return { status: "error", fieldErrors: { file: ["El archivo supera el máximo de 15 MB."] }, values };
     upload = { name: file.name, size: file.size, bytes: new Uint8Array(await file.arrayBuffer()) };
   }
-  const result = await createReport(access, parsed.data, upload);
+  const result = await createReport(access, parsed.data, upload, await requestContext());
   if (!result.ok) return { status: "error", values, ...(result.field ? { fieldErrors: { [result.field]: [result.error] } } : { message: result.error }) };
   revalidatePath(`/doctor/patients/${patientId}`, "layout");
   redirect(`/doctor/patients/${patientId}/records/${result.data.recordId}?created=1`);
@@ -133,7 +137,7 @@ export async function correctReportAction(_prev: FormState, formData: FormData):
   const values = { reportId: str(formData.get("reportId")), title: str(formData.get("title")).slice(0, 200), content: str(formData.get("content")).slice(0, 20000), changeReason: str(formData.get("changeReason")).slice(0, 300) };
   const parsed = reportCorrectionSchema.safeParse(values);
   if (!parsed.success) return { status: "error", fieldErrors: zodFieldErrors(parsed.error), values };
-  const result = await correctReport(access, parsed.data);
+  const result = await correctReport(access, parsed.data, await requestContext());
   if (!result.ok) return { status: "error", message: result.error, values };
   revalidatePath(`/doctor/patients/${patientId}`, "layout");
   redirect(`/doctor/patients/${patientId}/records/${result.data.recordId}?corrected=${result.data.version}`);
