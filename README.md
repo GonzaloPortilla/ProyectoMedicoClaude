@@ -26,44 +26,79 @@ Base de una aplicación web para que pacientes guarden su información médica y
 
 **¿Por qué auth propia y no una librería?** El modelo pide sesiones en base de datos, roles múltiples y control fino. Con unas 300 líneas (`src/server/auth/`) se obtienen sesiones revocables, con token aleatorio guardado sólo como hash, sin dependencias opacas.
 
-## Requisitos
+## Inicio rápido
 
-- Node.js ≥ 20.19
-- PostgreSQL ≥ 14
+Necesitás **Node.js 20.19 o superior** y **PostgreSQL**. La forma más simple de tener PostgreSQL es Docker Desktop. Si no querés usar Docker, mirá la opción B más abajo.
 
-## Puesta en marcha
+Los comandos funcionan igual en Windows (PowerShell), macOS y Linux, salvo donde se indica.
+
+**1. Instalar dependencias**
 
 ```bash
 npm install
 ```
 
+**2. Crear el archivo de configuración**
+
+Windows (PowerShell):
+
+```powershell
+Copy-Item .env.example .env
+```
+
+macOS / Linux:
+
 ```bash
 cp .env.example .env
 ```
 
-Editá `.env` con tu conexión a PostgreSQL. Crear el usuario y las bases (ejemplo con `psql`):
+Los valores de `.env.example` ya funcionan con el PostgreSQL de Docker del paso 3.
+
+**3. Levantar PostgreSQL**
+
+Opción A, con Docker Desktop abierto:
 
 ```bash
-psql -U postgres -c "CREATE USER medapp WITH PASSWORD 'tu_password' CREATEDB;" -c "CREATE DATABASE medapp OWNER medapp;" -c "CREATE DATABASE medapp_test OWNER medapp;"
+docker compose up -d
 ```
 
-Aplicar migraciones y cargar datos demo:
+Opción B, sin Docker: instalá PostgreSQL desde https://www.postgresql.org/download/ y, con `psql` o pgAdmin, creá el usuario y las bases:
+
+```sql
+CREATE USER medapp WITH PASSWORD 'medapp_dev_password' CREATEDB;
+CREATE DATABASE medapp OWNER medapp;
+CREATE DATABASE medapp_test OWNER medapp;
+```
+
+Si elegís otro usuario o contraseña, actualizá `DATABASE_URL` y `TEST_DATABASE_URL` en `.env`.
+
+**4. Crear las tablas y cargar los datos demo**
 
 ```bash
-npm run db:migrate
+npm run db:deploy
 ```
 
 ```bash
 npm run db:seed
 ```
 
-Levantar en desarrollo:
+**5. Levantar la app**
 
 ```bash
 npm run dev
 ```
 
 Abrí http://localhost:3000.
+
+### Problemas frecuentes
+
+| Síntoma | Causa y solución |
+| --- | --- |
+| `Configuración incompleta (DATABASE_URL)` | Falta el archivo `.env`: hacé el paso 2 y reiniciá `npm run dev`. |
+| `Can't reach database server at localhost:5432` | PostgreSQL no está corriendo: hacé el paso 3 (con Docker, verificá que Docker Desktop esté abierto). |
+| `Module not found: '@/generated/prisma/client'` | El cliente de Prisma no se generó. Corré `npm run db:generate`. |
+| La página se ve sin estilos | Borrá la carpeta `.next` y volvé a correr `npm run dev`. |
+| Errores de permisos o archivos bloqueados en Windows | Evitá carpetas sincronizadas por OneDrive para el proyecto (por ejemplo, usá `C:\dev\ProyectoMedicoClaude`). |
 
 ### Cuentas demo
 
