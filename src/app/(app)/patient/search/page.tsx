@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { CategoryIcon } from "@/features/records/components/category-icon";
 import { searchPatientData } from "@/server/medical/search";
 import { requirePatient } from "@/server/patient/context";
@@ -20,7 +21,7 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
 
   return (
     <>
-      <PageHeader eyebrow="Paciente" title="Buscar" description="Encontrá estudios, médicos, instituciones, etiquetas y datos de salud." />
+      <PageHeader title="Buscar" description="Encontrá estudios, médicos, instituciones, etiquetas y datos de salud." />
 
       <form role="search" className="mb-6 flex gap-2">
         <div className="relative flex-1">
@@ -42,11 +43,10 @@ export default async function SearchPage({ searchParams }: { searchParams: Promi
       </form>
 
       {!query ? (
-        <p className="text-sm text-muted">Escribí al menos 2 letras. La búsqueda no distingue mayúsculas ni acentos.</p>
+        <p className="text-sm text-muted">Buscá por estudio, categoría, especialidad, institución, médico, etiqueta o datos de Mi salud. No distingue mayúsculas ni acentos.</p>
       ) : !results || results.total === 0 ? (
-        <Card className="px-6 py-14 text-center">
-          <p className="font-medium text-ink">Sin resultados para “{query}”</p>
-          <p className="mt-1 text-sm text-muted">Probá con otra palabra o revisá la ortografía.</p>
+        <Card>
+          <EmptyState icon={Search} title={`Sin resultados para “${query}”`} description="Probá con otra palabra: el nombre del estudio, el médico, la institución o una etiqueta." />
         </Card>
       ) : (
         <div className="space-y-8">

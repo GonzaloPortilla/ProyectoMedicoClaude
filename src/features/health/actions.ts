@@ -1,5 +1,6 @@
 "use server";
 
+import { withFormErrors } from "@/server/action-errors";
 import { revalidatePath } from "next/cache";
 import { safeValues, zodFieldErrors, type FormState } from "@/lib/form";
 import { KIND_CONFIG } from "@/features/health/config";
@@ -16,7 +17,7 @@ function revalidate() {
   revalidatePath("/patient", "layout");
 }
 
-export async function addHealthEntryAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const addHealthEntryAction = withFormErrors("addHealthEntryAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const ctx = await authorizePatient();
   if (!ctx) return FORBIDDEN;
   const kind = healthKindSchema.safeParse(formData.get("kind"));
@@ -39,7 +40,7 @@ export async function addHealthEntryAction(_prev: FormState, formData: FormData)
   await audit({ action: "HEALTH_ENTRY_CREATED", actorType: "PATIENT", actorUserId: ctx.user.id, subjectPatientId: ctx.patientId, resourceType: "HEALTH_ENTRY", metadata: { kind: kind.data } }, await requestContext());
   revalidate();
   return { status: "success", message: "Guardado." };
-}
+});
 
 export async function deleteHealthEntryAction(formData: FormData): Promise<void> {
   const ctx = await authorizePatient();
@@ -54,7 +55,7 @@ export async function deleteHealthEntryAction(formData: FormData): Promise<void>
   revalidate();
 }
 
-export async function saveVitalsAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const saveVitalsAction = withFormErrors("saveVitalsAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const ctx = await authorizePatient();
   if (!ctx) return FORBIDDEN;
   const parsed = vitalsSchema.safeParse({
@@ -67,9 +68,9 @@ export async function saveVitalsAction(_prev: FormState, formData: FormData): Pr
   await audit({ action: "PROFILE_UPDATED", actorType: "PATIENT", actorUserId: ctx.user.id, subjectPatientId: ctx.patientId, resourceType: "HEALTH_PROFILE", metadata: { kind: "vitals", fields: Object.keys(parsed.data) } }, await requestContext());
   revalidate();
   return { status: "success", message: "Datos actualizados." };
-}
+});
 
-export async function saveEmergencySettingsAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const saveEmergencySettingsAction = withFormErrors("saveEmergencySettingsAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const ctx = await authorizePatient();
   if (!ctx) return FORBIDDEN;
   const keys = ["showBloodType", "showAllergies", "showConditions", "showMedications", "showEmergencyContacts", "additionalNotes"] as const;
@@ -86,4 +87,4 @@ export async function saveEmergencySettingsAction(_prev: FormState, formData: Fo
   }, await requestContext());
   revalidate();
   return { status: "success", message: "Preferencias de emergencia guardadas." };
-}
+});

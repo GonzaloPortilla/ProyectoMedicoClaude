@@ -6,7 +6,7 @@ import { Activity, BadgeCheck, CalendarClock, Settings, FileText, HeartPulse, Ho
 import type { NavIcon, NavItem, NavSection } from "@/components/shell/nav-config";
 import { cn } from "@/lib/utils";
 
-const ICONS: Record<NavIcon, typeof House> = {
+export const NAV_ICONS: Record<NavIcon, typeof House> = {
   home: House,
   profile: UserRound,
   doctor: Stethoscope,
@@ -23,7 +23,7 @@ const ICONS: Record<NavIcon, typeof House> = {
   settings: Settings,
 };
 
-function useIsActive() {
+export function useIsActive() {
   const pathname = usePathname();
   return (item: NavItem) => {
     if (item.exclude?.some((p) => pathname === p || pathname.startsWith(`${p}/`))) return false;
@@ -40,7 +40,7 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
           {sections.length > 1 ? <p className="mb-1.5 px-3 text-[11px] font-semibold tracking-wider text-muted uppercase">{section.title}</p> : null}
           <ul className="space-y-0.5">
             {section.items.map((item) => {
-              const Icon = ICONS[item.icon];
+              const Icon = NAV_ICONS[item.icon];
               const active = isActive(item);
               return (
                 <li key={item.href}>
@@ -61,36 +61,6 @@ export function SidebarNav({ sections }: { sections: NavSection[] }) {
           </ul>
         </div>
       ))}
-    </nav>
-  );
-}
-
-export function MobileNav({ sections }: { sections: NavSection[] }) {
-  const isActive = useIsActive();
-  const items = sections.flatMap((s) => s.items);
-  return (
-    <nav aria-label="Navegación principal" className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none]">
-      <ul className="flex gap-1">
-        {items.map((item) => {
-          const Icon = ICONS[item.icon];
-          const active = isActive(item);
-          return (
-            <li key={item.href}>
-              <Link
-                href={item.href}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "flex h-9 items-center gap-2 rounded-full px-3.5 text-[13px] font-medium whitespace-nowrap transition-colors",
-                  active ? "bg-ink text-white" : "text-ink-soft hover:bg-ink/[0.05]",
-                )}
-              >
-                <Icon className="size-3.5" />
-                {item.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
     </nav>
   );
 }

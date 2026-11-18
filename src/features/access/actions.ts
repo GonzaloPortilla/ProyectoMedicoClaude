@@ -1,5 +1,6 @@
 "use server";
 
+import { withFormErrors } from "@/server/action-errors";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { zodFieldErrors, type FormState } from "@/lib/form";
@@ -49,7 +50,7 @@ export async function rejectRequestAction(formData: FormData): Promise<void> {
   redirect("/patient/doctors?rejected=1");
 }
 
-export async function approveRequestAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const approveRequestAction = withFormErrors("approveRequestAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const ctx = await authorizePatient();
   if (!ctx) return FORBIDDEN;
   const parsed = approveRequestSchema.safeParse({
@@ -68,7 +69,7 @@ export async function approveRequestAction(_prev: FormState, formData: FormData)
   if (!result.ok) return { status: "error", ...(result.field ? { fieldErrors: { [result.field]: [result.error] } } : { message: result.error }) };
   revalidatePath("/patient", "layout");
   redirect("/patient/doctors?approved=1");
-}
+});
 
 export async function revokeGrantAction(formData: FormData): Promise<void> {
   const ctx = await authorizePatient();
@@ -80,7 +81,7 @@ export async function revokeGrantAction(formData: FormData): Promise<void> {
 
 // ─── Médico ────────────────────────────────────────────────────────────────
 
-export async function requestAccessAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const requestAccessAction = withFormErrors("requestAccessAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const doctor = await authorizeVerifiedDoctor();
   if (!doctor) return FORBIDDEN;
   const values = { code: str(formData.get("code")).slice(0, 20), message: str(formData.get("message")).slice(0, 300) };
@@ -94,7 +95,7 @@ export async function requestAccessAction(_prev: FormState, formData: FormData):
   if (!result.ok) return { status: "error", values, ...(result.field ? { fieldErrors: { [result.field]: [result.error] } } : { message: result.error }) };
   revalidatePath("/doctor");
   return { status: "success", message: "Solicitud enviada. El paciente la verá en “Mis médicos” para aceptarla y elegir qué compartir." };
-}
+});
 
 export async function cancelRequestAction(formData: FormData): Promise<void> {
   const doctor = await authorizeVerifiedDoctor();
@@ -103,7 +104,7 @@ export async function cancelRequestAction(formData: FormData): Promise<void> {
   revalidatePath("/doctor");
 }
 
-export async function createReportAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const createReportAction = withFormErrors("createReportAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const doctor = await authorizeVerifiedDoctor();
   if (!doctor) return FORBIDDEN;
   const patientId = str(formData.get("patientId")).slice(0, 64);
@@ -125,9 +126,9 @@ export async function createReportAction(_prev: FormState, formData: FormData): 
   if (!result.ok) return { status: "error", values, ...(result.field ? { fieldErrors: { [result.field]: [result.error] } } : { message: result.error }) };
   revalidatePath(`/doctor/patients/${patientId}`, "layout");
   redirect(`/doctor/patients/${patientId}/records/${result.data.recordId}?created=1`);
-}
+});
 
-export async function correctReportAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const correctReportAction = withFormErrors("correctReportAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const doctor = await authorizeVerifiedDoctor();
   if (!doctor) return FORBIDDEN;
   const patientId = str(formData.get("patientId")).slice(0, 64);
@@ -141,4 +142,4 @@ export async function correctReportAction(_prev: FormState, formData: FormData):
   if (!result.ok) return { status: "error", message: result.error, values };
   revalidatePath(`/doctor/patients/${patientId}`, "layout");
   redirect(`/doctor/patients/${patientId}/records/${result.data.recordId}?corrected=${result.data.version}`);
-}
+});

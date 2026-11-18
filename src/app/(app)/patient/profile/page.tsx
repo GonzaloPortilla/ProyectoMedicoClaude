@@ -19,14 +19,14 @@ export default async function PatientProfilePage() {
       <PageHeader
         eyebrow={
           <span className="inline-flex items-center gap-1">
-            <Link href="/patient" className="hover:text-ink">
-              Inicio
+            <Link href="/settings" className="hover:text-ink">
+              Configuración
             </Link>
-            <ChevronRight className="size-3.5" /> Mi perfil
+            <ChevronRight className="size-3.5" /> Datos de identificación
           </span>
         }
-        title="Mi perfil"
-        description="Datos básicos de identificación. Sólo vos podés verlos y editarlos."
+        title="Datos de identificación"
+        description="Fecha de nacimiento, documento y contacto. Los médicos que autorices no ven tu documento ni tu teléfono."
       />
 
       <div className="space-y-5">

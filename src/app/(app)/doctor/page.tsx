@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { VerificationBadge } from "@/components/status/verification-badge";
 import { Avatar } from "@/components/shell/user-card";
 import { PermissionChips } from "@/features/access/components/permission-chips";
@@ -67,7 +68,7 @@ export default async function DoctorDashboardPage({ searchParams }: { searchPara
 
   return (
     <>
-      <PageHeader eyebrow="Panel profesional" title={`${greeting()}, Dr/a. ${user.lastName}`} description="Tus pacientes autorizados y tus solicitudes de acceso." />
+      <PageHeader eyebrow="Panel profesional" title={`${greeting()}, Dr/a. ${user.lastName}`} description={verified ? "Tus pacientes autorizados y tus solicitudes de acceso." : undefined} />
 
       {welcome === "1" ? (
         <Alert tone="success" className="mb-6">
@@ -75,6 +76,11 @@ export default async function DoctorDashboardPage({ searchParams }: { searchPara
         </Alert>
       ) : null}
 
+      {verified ? (
+        <p className="-mt-4 mb-6 flex flex-wrap items-center gap-2 text-sm text-muted">
+          <VerificationBadge status="VERIFIED" /> {profile.specialty} · Mat. {profile.licenseNumber} · {jurisdictionName(profile.jurisdiction)}
+        </p>
+      ) : (
       <Card className="mb-5 overflow-hidden">
         <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-start sm:p-6">
           <span className={`flex size-12 shrink-0 items-center justify-center rounded-2xl ring-1 ring-inset ${status.ring}`}>
@@ -94,6 +100,7 @@ export default async function DoctorDashboardPage({ searchParams }: { searchPara
           </div>
         </div>
       </Card>
+      )}
 
       {verified ? (
         <>
@@ -136,12 +143,12 @@ export default async function DoctorDashboardPage({ searchParams }: { searchPara
                   <Users className="size-4 text-brand-600" /> Pacientes autorizados
                 </h2>
                 {grants.length === 0 ? (
-                  <Card className="flex flex-col items-center px-6 py-12 text-center">
-                    <span className="flex size-12 items-center justify-center rounded-2xl bg-canvas text-muted ring-1 ring-line ring-inset">
-                      <Users className="size-5" />
-                    </span>
-                    <p className="mt-4 text-sm font-medium text-ink">Todavía no tenés pacientes autorizados</p>
-                    <p className="mt-1 max-w-xs text-sm text-muted">Ingresá el código de un paciente para enviarle una solicitud.</p>
+                  <Card>
+                    <EmptyState
+                      icon={Users}
+                      title="Todavía no tenés pacientes autorizados"
+                      description="Pedile a tu paciente que genere un código en “Mis médicos” e ingresalo en “Solicitar acceso”. Vas a ver sólo lo que él autorice."
+                    />
                   </Card>
                 ) : (
                   <ul className="space-y-3">
@@ -187,7 +194,7 @@ export default async function DoctorDashboardPage({ searchParams }: { searchPara
                 <CardHeader title="Solicitudes enviadas" description="Esperando respuesta del paciente." />
                 <CardBody>
                   {pending.length === 0 ? (
-                    <p className="text-sm text-muted">No tenés solicitudes pendientes.</p>
+                    <p className="text-sm text-muted">No tenés solicitudes pendientes. Cuando envíes una, la vas a ver acá hasta que el paciente responda.</p>
                   ) : (
                     <ul className="divide-y divide-line">
                       {pending.map((r) => (
@@ -208,6 +215,7 @@ export default async function DoctorDashboardPage({ searchParams }: { searchPara
         </>
       ) : null}
 
+      {verified ? null : (
       <Card className="mt-5">
         <CardHeader title="Información profesional" />
         <CardBody>
@@ -228,6 +236,7 @@ export default async function DoctorDashboardPage({ searchParams }: { searchPara
           </dl>
         </CardBody>
       </Card>
+      )}
     </>
   );
 }

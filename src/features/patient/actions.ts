@@ -1,5 +1,6 @@
 "use server";
 
+import { withFormErrors } from "@/server/action-errors";
 import { revalidatePath } from "next/cache";
 import { formObject, safeValues, zodFieldErrors, type FormState } from "@/lib/form";
 import { patientProfileSchema } from "@/features/patient/schemas";
@@ -8,7 +9,7 @@ import { db } from "@/server/db";
 import { audit } from "@/server/audit/log";
 import { requestContext } from "@/server/audit/request";
 
-export async function updatePatientProfileAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const updatePatientProfileAction = withFormErrors("updatePatientProfileAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   // Autorización en el servidor: el usuario sale de la sesión, no del formulario.
   const user = await authorizeRole("PATIENT");
   if (!user) return { status: "error", message: "No tenés permiso para realizar esta acción." };
@@ -38,4 +39,4 @@ export async function updatePatientProfileAction(_prev: FormState, formData: For
 
   revalidatePath("/patient", "layout");
   return { status: "success", message: "Perfil actualizado.", values };
-}
+});

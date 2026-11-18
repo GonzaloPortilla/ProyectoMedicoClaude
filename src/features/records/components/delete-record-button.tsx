@@ -2,20 +2,28 @@
 
 import { Trash2 } from "lucide-react";
 import { deleteRecordAction } from "@/features/records/actions";
-import { SubmitButton } from "@/components/ui/submit-button";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 
 export function DeleteRecordButton({ recordId, title }: { recordId: string; title: string }) {
   return (
-    <form
+    <ConfirmDialog
+      title="¿Eliminar este estudio?"
+      description={
+        <>
+          Se van a eliminar <strong className="font-medium text-ink">«{title}»</strong> y sus archivos. Esta acción no se puede deshacer.
+        </>
+      }
+      confirmLabel="Eliminar"
+      pendingLabel="Eliminando…"
       action={deleteRecordAction}
-      onSubmit={(e) => {
-        if (!confirm(`¿Eliminar "${title}" y sus archivos? Esta acción no se puede deshacer.`)) e.preventDefault();
+      fields={{ recordId }}
+      trigger={{
+        content: (
+          <>
+            <Trash2 className="size-3.5" /> Eliminar
+          </>
+        ),
       }}
-    >
-      <input type="hidden" name="recordId" value={recordId} />
-      <SubmitButton variant="danger" size="sm" pendingLabel="Eliminando…">
-        <Trash2 className="size-3.5" /> Eliminar
-      </SubmitButton>
-    </form>
+    />
   );
 }

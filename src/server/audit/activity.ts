@@ -16,7 +16,8 @@ import { KIND_CONFIG, type HealthKind } from "@/features/health/config";
  * observador se muestra la categoría (un médico no vuelve a ver títulos tras perder el acceso).
  */
 
-export type ActivityFilter = "all" | "doctors" | "security" | "mine";
+/** "highlights": lo relevante para el inicio (sin inicios/cierres de sesión rutinarios). */
+export type ActivityFilter = "all" | "doctors" | "security" | "mine" | "highlights";
 
 export type ActivityItem = {
   id: string;
@@ -59,7 +60,9 @@ export async function listActivity(opts: { userId: string; patientId: string | n
         ? { action: { in: SECURITY_ACTIONS } }
         : opts.filter === "mine"
           ? { actorUserId: opts.userId }
-          : {};
+          : opts.filter === "highlights"
+            ? { action: { notIn: ["LOGIN_SUCCEEDED", "LOGOUT", "SESSION_REVOKED", "EMAIL_VERIFIED", "LINK_CODE_CREATED"] } }
+            : {};
 
   const events = await db.auditEvent.findMany({
     where: { AND: [{ OR: scope }, filterWhere, opts.before ? { seq: { lt: opts.before } } : {}] },

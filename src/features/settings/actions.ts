@@ -1,5 +1,6 @@
 "use server";
 
+import { withFormErrors } from "@/server/action-errors";
 import { revalidatePath } from "next/cache";
 import { zodFieldErrors, type FormState } from "@/lib/form";
 import { changePasswordSchema, mfaCodeSchema, profileNameSchema } from "@/features/auth/schemas";
@@ -20,7 +21,7 @@ async function subjectFor(userId: string, roles: readonly string[]) {
   return roles.includes("PATIENT") ? ((await db.patientProfile.findUnique({ where: { userId }, select: { id: true } }))?.id ?? null) : null;
 }
 
-export async function updateNameAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const updateNameAction = withFormErrors("updateNameAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const session = await getCurrentSession();
   if (!session) return FORBIDDEN;
   const values = { firstName: str(formData.get("firstName")).slice(0, 100), lastName: str(formData.get("lastName")).slice(0, 100) };
@@ -36,9 +37,9 @@ export async function updateNameAction(_prev: FormState, formData: FormData): Pr
   );
   revalidatePath("/", "layout");
   return { status: "success", message: "Datos actualizados.", values };
-}
+});
 
-export async function changePasswordAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const changePasswordAction = withFormErrors("changePasswordAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const session = await getCurrentSession();
   if (!session) return FORBIDDEN;
   if (!limiters.sensitive.consume(`pwd:${session.user.id}`).allowed) return TOO_MANY;
@@ -56,7 +57,7 @@ export async function changePasswordAction(_prev: FormState, formData: FormData)
     status: "success",
     message: result.data.sessionsRevoked ? `Contraseña actualizada. Cerramos ${result.data.sessionsRevoked} ${result.data.sessionsRevoked === 1 ? "sesión" : "sesiones"} en otros dispositivos.` : "Contraseña actualizada.",
   };
-}
+});
 
 export type MfaSetupState = { step: "idle" | "scan" | "done"; qrDataUrl?: string; secret?: string; recoveryCodes?: string[]; error?: string };
 
@@ -82,7 +83,7 @@ export async function confirmMfaSetupAction(code: string): Promise<MfaSetupState
   return { step: "done", recoveryCodes: result.recoveryCodes };
 }
 
-export async function disableMfaAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const disableMfaAction = withFormErrors("disableMfaAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const session = await getCurrentSession();
   if (!session) return FORBIDDEN;
   if (!limiters.sensitive.consume(`mfa-off:${session.user.id}`).allowed) return TOO_MANY;
@@ -90,7 +91,7 @@ export async function disableMfaAction(_prev: FormState, formData: FormData): Pr
   if (!result.ok) return { status: "error", ...(result.field ? { fieldErrors: { [result.field]: [result.error] } } : { message: result.error }) };
   revalidatePath("/", "layout");
   return { status: "success", message: "Desactivaste la verificación en dos pasos." };
-}
+});
 
 export async function revokeSessionAction(formData: FormData): Promise<void> {
   const session = await getCurrentSession();

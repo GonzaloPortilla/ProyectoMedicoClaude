@@ -2,7 +2,7 @@
 
 Vitalia guarda **información médica sensible**. Este documento describe el modelo de amenazas, los controles implementados (con referencias al código), el riesgo residual y la configuración mínima para producción.
 
-> Estado: MVP en desarrollo (Fase 4). No apto para datos reales hasta completar el checklist de producción (§7).
+> Estado: MVP de demostración (fases 1 a 5). No apto para datos reales hasta completar el checklist de producción (§7). Arquitectura en [ARCHITECTURE.md](ARCHITECTURE.md); modelo de datos y triggers en [DATABASE.md](DATABASE.md).
 
 ---
 
@@ -46,7 +46,8 @@ El navegador **nunca** es de confianza: toda autorización se resuelve en el ser
 | Cabeceras | `X-Frame-Options: DENY`, `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, `COOP`, HSTS en producción, sin `X-Powered-By` | `next.config.ts`, `src/proxy.ts` |
 | Auditoría | Registro append-only con cadena de hashes, triggers que impiden `UPDATE`/`DELETE`/`TRUNCATE`, lista blanca de metadatos, IP anonimizada | `src/server/audit/*`, migración `security_audit` |
 | Informes clínicos | Versiones append-only (trigger), con autor, fecha y motivo de cada corrección; el paciente no puede borrar informes de médicos | `src/server/medical/reports.ts` |
-| Errores | Páginas de error sin detalles internos (sólo un código para soporte); respuestas de API genéricas | `app/error.tsx`, route handlers |
+| Errores | Páginas de error sin detalles internos (sólo un código para soporte); respuestas de API genéricas; los formularios convierten fallas inesperadas en un mensaje amable sin datos internos | `app/error.tsx`, `src/server/action-errors.ts` |
+| Operaciones destructivas | Eliminar, revocar o rechazar piden confirmación explícita en un diálogo accesible | `src/components/ui/confirm-dialog.tsx` |
 | Secretos | Sólo en `.env` (ignorado por git); `APP_SECRET` obligatorio en producción y se rechaza el valor de ejemplo; subclaves por propósito (HKDF) | `src/server/env.ts`, `src/server/crypto/keys.ts` |
 
 ## 4. Modelo de amenazas

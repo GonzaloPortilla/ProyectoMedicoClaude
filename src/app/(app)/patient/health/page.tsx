@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Activity, Droplet, HeartPulse, Hospital, Pill, Scissors, ShieldAlert, Syringe, Users, Phone } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { Card, CardBody } from "@/components/ui/card";
 import { EntryCard } from "@/features/health/components/entry-card";
 import { VitalsForm } from "@/features/health/components/vitals-form";
 import { BLOOD_TYPE_LABELS, SEVERITY_LABELS } from "@/features/health/config";
@@ -33,7 +33,7 @@ export default async function HealthPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Paciente" title="Mi salud" description="Tu información de salud, organizada por secciones. Completá sólo lo que quieras." />
+      <PageHeader title="Mi salud" description="Tu información de salud, organizada por secciones. Completá sólo lo que quieras." />
 
       <Card className="mb-5">
         <div className="grid grid-cols-2 divide-line border-b border-line sm:grid-cols-4 sm:divide-x">
@@ -46,7 +46,6 @@ export default async function HealthPage() {
             </div>
           ))}
         </div>
-        <CardHeader title="Datos básicos" description="Grupo sanguíneo y medidas." />
         <CardBody>
           <VitalsForm
             defaults={{

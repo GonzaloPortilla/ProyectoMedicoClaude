@@ -1,5 +1,6 @@
 "use server";
 
+import { withFormErrors } from "@/server/action-errors";
 import { after } from "next/server";
 import { redirect } from "next/navigation";
 import { formObject, safeValues, zodFieldErrors, type FormState } from "@/lib/form";
@@ -49,7 +50,7 @@ async function startSession(userId: string, mfaVerified: boolean) {
 
 // ─── Login (paso 1: contraseña) ────────────────────────────────────────────
 
-export async function loginAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const loginAction = withFormErrors("loginAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const values = safeValues(formData);
   const parsed = loginSchema.safeParse(formObject(formData, ["email", "password"]));
   if (!parsed.success) return { status: "error", fieldErrors: zodFieldErrors(parsed.error), values };
@@ -80,11 +81,11 @@ export async function loginAction(_prev: FormState, formData: FormData): Promise
   await recordSuccessfulLogin(result.userId, ctx, "password");
   // /dashboard decide el inicio según los roles reales del usuario.
   redirect("/dashboard");
-}
+});
 
 // ─── Login (paso 2: verificación en dos pasos) ─────────────────────────────
 
-export async function mfaLoginAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const mfaLoginAction = withFormErrors("mfaLoginAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const challenge = readMfaChallenge(await getMfaChallengeCookie());
   if (!challenge) return { status: "error", message: "La verificación venció. Volvé a ingresar tu contraseña." };
 
@@ -109,11 +110,11 @@ export async function mfaLoginAction(_prev: FormState, formData: FormData): Prom
   }
   await recordSuccessfulLogin(challenge.userId, ctx, check.method);
   redirect("/dashboard");
-}
+});
 
 // ─── Registro ──────────────────────────────────────────────────────────────
 
-export async function registerPatientAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const registerPatientAction = withFormErrors("registerPatientAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const values = safeValues(formData);
   const parsed = registerPatientSchema.safeParse(
     formObject(formData, ["firstName", "lastName", "email", "password", "confirmPassword", "acceptTerms"]),
@@ -127,9 +128,9 @@ export async function registerPatientAction(_prev: FormState, formData: FormData
   if (!result.ok) return { status: "error", values, message: result.error };
   // Misma respuesta exista o no la cuenta: no se revela qué emails están registrados.
   redirect("/register/check-email");
-}
+});
 
-export async function registerDoctorAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const registerDoctorAction = withFormErrors("registerDoctorAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const values = safeValues(formData);
   const parsed = registerDoctorSchema.safeParse(
     formObject(formData, ["firstName", "lastName", "email", "specialty", "licenseNumber", "jurisdiction", "password", "confirmPassword", "acceptTerms"]),
@@ -144,9 +145,9 @@ export async function registerDoctorAction(_prev: FormState, formData: FormData)
     return { status: "error", values, fieldErrors: result.field ? { [result.field]: [result.error] } : undefined, message: result.field ? undefined : result.error };
   }
   redirect("/register/check-email?professional=1");
-}
+});
 
-export async function verifyEmailAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const verifyEmailAction = withFormErrors("verifyEmailAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const token = formData.get("token");
   if (typeof token !== "string") return { status: "error", message: "El enlace no es válido." };
   const ctx = await requestContext();
@@ -154,7 +155,7 @@ export async function verifyEmailAction(_prev: FormState, formData: FormData): P
   const ok = await verifyEmailToken(token, ctx);
   if (!ok) return { status: "error", message: "El enlace no es válido o ya venció. Ingresá con tu email y contraseña para recibir uno nuevo." };
   redirect("/login?verified=1");
-}
+});
 
 // ─── Logout ────────────────────────────────────────────────────────────────
 
@@ -174,7 +175,7 @@ export async function logoutAction(): Promise<void> {
 
 // ─── Recuperación de contraseña ────────────────────────────────────────────
 
-export async function forgotPasswordAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const forgotPasswordAction = withFormErrors("forgotPasswordAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const values = safeValues(formData);
   const parsed = forgotPasswordSchema.safeParse(formObject(formData, ["email"]));
   if (!parsed.success) return { status: "error", fieldErrors: zodFieldErrors(parsed.error), values };
@@ -199,9 +200,9 @@ export async function forgotPasswordAction(_prev: FormState, formData: FormData)
     status: "success",
     message: "Si existe una cuenta con ese email, te enviamos un enlace para restablecer la contraseña.",
   };
-}
+});
 
-export async function resetPasswordAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const resetPasswordAction = withFormErrors("resetPasswordAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const parsed = resetPasswordSchema.safeParse(formObject(formData, ["token", "password", "confirmPassword"]));
   if (!parsed.success) {
     const fieldErrors = zodFieldErrors(parsed.error);
@@ -214,4 +215,4 @@ export async function resetPasswordAction(_prev: FormState, formData: FormData):
   const result = await resetPasswordWithToken(parsed.data.token, parsed.data.password, ctx);
   if (!result.ok) return { status: "error", message: result.error };
   redirect("/login?reset=1");
-}
+});

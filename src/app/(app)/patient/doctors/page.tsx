@@ -6,6 +6,7 @@ import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { buttonClasses } from "@/components/ui/button";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
+import { EmptyState } from "@/components/ui/empty-state";
 import { DoctorIdentity } from "@/features/access/components/doctor-identity";
 import { LinkCodeCard } from "@/features/access/components/link-code-card";
 import { PermissionChips } from "@/features/access/components/permission-chips";
@@ -35,7 +36,7 @@ export default async function PatientDoctorsPage({ searchParams }: { searchParam
 
   return (
     <>
-      <PageHeader eyebrow="Paciente" title="Mis médicos" description="Vos decidís qué profesional ve tu información, qué parte y por cuánto tiempo." />
+      <PageHeader title="Mis médicos" description="Vos decidís qué profesional ve tu información, qué parte y por cuánto tiempo." />
       {notice ? (
         <Alert tone="success" className="mb-5">
           {notice}
@@ -73,9 +74,13 @@ export default async function PatientDoctorsPage({ searchParams }: { searchParam
             <ShieldCheck className="size-4 text-brand-600" /> Accesos activos
           </h2>
           {grants.active.length === 0 ? (
-            <Card className="px-6 py-10 text-center">
-              <p className="font-medium text-ink">Ningún profesional tiene acceso a tu información</p>
-              <p className="mt-1 text-sm text-muted">Cuando autorices a un médico, lo vas a ver acá.</p>
+            <Card>
+              <EmptyState
+                compact
+                icon={ShieldCheck}
+                title="No hay médicos con acceso"
+                description="Tu información es privada. Para compartirla, generá un código y dáselo a tu médico: vas a poder elegir qué ve y por cuánto tiempo."
+              />
             </Card>
           ) : (
             <ul className="space-y-3">
@@ -146,7 +151,7 @@ export default async function PatientDoctorsPage({ searchParams }: { searchParam
           ) : null}
         </section>
 
-        <div className="min-w-0">
+        <div className="order-first min-w-0 lg:order-none">
           <Card>
             <CardHeader title="Vincular un médico" description="Código de un solo uso, válido por 60 minutos." action={<KeyRound className="size-4 text-muted" />} />
             <CardBody>

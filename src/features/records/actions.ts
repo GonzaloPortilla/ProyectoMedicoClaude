@@ -1,5 +1,6 @@
 "use server";
 
+import { withFormErrors } from "@/server/action-errors";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { formObject, safeValues, zodFieldErrors, type FormState } from "@/lib/form";
@@ -11,7 +12,7 @@ import { requestContext } from "@/server/audit/request";
 
 const FORBIDDEN: FormState = { status: "error", message: "No tenés permiso para realizar esta acción." };
 
-export async function createRecordAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const createRecordAction = withFormErrors("createRecordAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const ctx = await authorizePatient();
   if (!ctx) return FORBIDDEN;
 
@@ -35,7 +36,7 @@ export async function createRecordAction(_prev: FormState, formData: FormData): 
   }
   revalidatePath("/patient", "layout");
   redirect(`/patient/documents/${result.data.recordId}?created=1`);
-}
+});
 
 export async function deleteRecordAction(formData: FormData): Promise<void> {
   const ctx = await authorizePatient();

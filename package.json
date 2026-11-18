@@ -18,7 +18,8 @@
     "db:reset": "prisma migrate reset",
     "db:studio": "prisma studio",
     "audit:verify": "tsx scripts/audit-verify.ts",
-    "jobs:expire-access": "tsx --conditions=react-server --tsconfig tsconfig.json scripts/expire-access.ts"
+    "jobs:expire-access": "tsx --conditions=react-server --tsconfig tsconfig.json scripts/expire-access.ts",
+    "demo:reset": "tsx prisma/seed.ts --reset"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1170.0",

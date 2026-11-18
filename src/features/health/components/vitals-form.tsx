@@ -1,6 +1,8 @@
 "use client";
 
-import { useActionState } from "react";
+import { Pencil } from "lucide-react";
+import { useActionState, useState } from "react";
+import { Button } from "@/components/ui/button";
 import { saveVitalsAction } from "@/features/health/actions";
 import { BLOOD_TYPE_LABELS } from "@/features/health/config";
 import { initialFormState } from "@/lib/form";
@@ -10,7 +12,18 @@ import { SubmitButton } from "@/components/ui/submit-button";
 
 export function VitalsForm({ defaults }: { defaults: { bloodType: string; heightCm: string; weightKg: string } }) {
   const [state, action] = useActionState(saveVitalsAction, initialFormState);
+  const [editing, setEditing] = useState(false);
   const e = state.fieldErrors ?? {};
+  if (!editing && state.status !== "error") {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {state.status === "success" ? <p className="text-sm text-brand-700" role="status">{state.message}</p> : <p className="text-sm text-muted">Grupo sanguíneo, altura y peso.</p>}
+        <Button type="button" variant="secondary" size="sm" onClick={() => setEditing(true)}>
+          <Pencil className="size-3.5" /> Editar
+        </Button>
+      </div>
+    );
+  }
   const v = { ...defaults, ...(state.status === "error" ? state.values : {}) };
   return (
     <form action={action} className="space-y-4" noValidate>
@@ -27,7 +40,10 @@ export function VitalsForm({ defaults }: { defaults: { bloodType: string; height
         <TextField label="Altura (cm)" name="heightCm" inputMode="numeric" placeholder="170" defaultValue={v.heightCm} error={e.heightCm} />
         <TextField label="Peso (kg)" name="weightKg" inputMode="decimal" placeholder="70,5" defaultValue={v.weightKg} error={e.weightKg} />
       </div>
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>
+          Cancelar
+        </Button>
         <SubmitButton size="sm" pendingLabel="Guardando…">
           Guardar
         </SubmitButton>

@@ -1,7 +1,8 @@
 import type { Role } from "@/generated/prisma/enums";
 
 export type NavIcon = "home" | "profile" | "doctor" | "overview" | "users" | "verify" | "health" | "documents" | "history" | "emergency" | "search" | "doctors" | "activity" | "settings";
-export type NavItem = { href: string; label: string; icon: NavIcon; exact?: boolean; exclude?: string[] };
+/** `primary`: aparece en la barra inferior del celular (máx. 4); el resto va en "Más". */
+export type NavItem = { href: string; label: string; icon: NavIcon; exact?: boolean; exclude?: string[]; primary?: boolean };
 /** `role` ausente = sección visible para cualquier usuario autenticado. */
 export type NavSection = { role?: Role; key: string; title: string; items: NavItem[] };
 
@@ -12,30 +13,29 @@ export const NAV_SECTIONS: NavSection[] = [
     key: "patient",
     title: "Paciente",
     items: [
-      { href: "/patient", label: "Inicio", icon: "home", exact: true },
-      { href: "/patient/health", label: "Mi salud", icon: "health" },
-      { href: "/patient/documents", label: "Estudios", icon: "documents" },
+      { href: "/patient", label: "Inicio", icon: "home", exact: true, primary: true },
+      { href: "/patient/health", label: "Mi salud", icon: "health", primary: true },
+      { href: "/patient/documents", label: "Estudios", icon: "documents", primary: true },
       { href: "/patient/history", label: "Historial", icon: "history" },
-      { href: "/patient/doctors", label: "Mis médicos", icon: "doctors" },
+      { href: "/patient/doctors", label: "Mis médicos", icon: "doctors", primary: true },
       { href: "/patient/emergency", label: "Emergencia", icon: "emergency" },
       { href: "/patient/search", label: "Buscar", icon: "search" },
-      { href: "/patient/profile", label: "Mi perfil", icon: "profile" },
     ],
   },
   {
     role: "DOCTOR",
     key: "doctor",
     title: "Profesional",
-    items: [{ href: "/doctor", label: "Panel profesional", icon: "doctor" }],
+    items: [{ href: "/doctor", label: "Pacientes", icon: "doctor", primary: true }],
   },
   {
     role: "ADMIN",
     key: "admin",
     title: "Administración",
     items: [
-      { href: "/admin", label: "Resumen", icon: "overview", exact: true },
-      { href: "/admin/users", label: "Usuarios", icon: "users" },
-      { href: "/admin/doctors", label: "Médicos", icon: "verify" },
+      { href: "/admin", label: "Resumen", icon: "overview", exact: true, primary: true },
+      { href: "/admin/users", label: "Usuarios", icon: "users", primary: true },
+      { href: "/admin/doctors", label: "Médicos", icon: "verify", primary: true },
     ],
   },
   {

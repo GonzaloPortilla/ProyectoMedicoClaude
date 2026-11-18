@@ -1,5 +1,6 @@
 "use server";
 
+import { withFormErrors } from "@/server/action-errors";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { formObject, zodFieldErrors, type FormState } from "@/lib/form";
@@ -9,7 +10,7 @@ import { db } from "@/server/db";
 import { audit } from "@/server/audit/log";
 import { requestContext } from "@/server/audit/request";
 
-export async function decideDoctorVerificationAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export const decideDoctorVerificationAction = withFormErrors("decideDoctorVerificationAction", async (_prev: FormState, formData: FormData): Promise<FormState> => {
   const admin = await authorizeRole("ADMIN");
   if (!admin) return { status: "error", message: "No tenés permiso para realizar esta acción." };
 
@@ -41,4 +42,4 @@ export async function decideDoctorVerificationAction(_prev: FormState, formData:
   // La tarjeta puede desaparecer del filtro actual, así que el aviso se muestra a nivel de página.
   const returnTo = doctorStatusFilterSchema.parse(formData.get("returnTo"));
   redirect(`/admin/doctors?status=${returnTo}&notice=${decision === "VERIFIED" ? "verified" : "rejected"}`);
-}
+});

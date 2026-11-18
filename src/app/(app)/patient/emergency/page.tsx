@@ -42,7 +42,7 @@ export default async function EmergencyPage() {
 
   return (
     <>
-      <PageHeader eyebrow="Paciente" title="Información de emergencia" description="Elegí qué datos vitales conviene tener a mano ante una urgencia." />
+      <PageHeader title="Información de emergencia" description="Elegí qué datos vitales conviene tener a mano ante una urgencia." />
 
       <Alert tone="info" className="mb-6">
         Por ahora esta ficha es privada y sólo la ves vos. Más adelante vas a poder compartirla de forma segura (por ejemplo, con un código QR).

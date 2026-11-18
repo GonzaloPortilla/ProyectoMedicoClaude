@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ChevronRight, X } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Card, CardBody } from "@/components/ui/card";
-import { SubmitButton } from "@/components/ui/submit-button";
-import { rejectRequestAction } from "@/features/access/actions";
+import { RejectRequestButton } from "@/features/access/components/reject-request-button";
 import { ApproveForm } from "@/features/access/components/approve-form";
 import { DoctorIdentity } from "@/features/access/components/doctor-identity";
 import { formatDateTime } from "@/features/access/format";
@@ -49,12 +48,9 @@ export default async function AccessRequestPage({ params }: { params: Promise<{ 
         <p className="mt-3 text-[13px] text-muted">
           Recibida el {formatDateTime(request.createdAt)} · vence el {formatDateTime(request.expiresAt)} si no respondés.
         </p>
-        <form action={rejectRequestAction} className="mt-4 border-t border-line pt-4">
-          <input type="hidden" name="requestId" value={request.id} />
-          <SubmitButton variant="secondary" size="sm" pendingLabel="Rechazando…">
-            <X className="size-3.5" /> Rechazar solicitud
-          </SubmitButton>
-        </form>
+        <div className="mt-4 border-t border-line pt-4">
+          <RejectRequestButton requestId={request.id} doctorName={`Dr/a. ${request.doctor.firstName} ${request.doctor.lastName}`} />
+        </div>
       </Card>
 
       <Card>

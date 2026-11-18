@@ -6,6 +6,8 @@ import { Button, ButtonLink } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { SourceBadge } from "@/components/status/source-badge";
 import { CategoryIcon } from "@/features/records/components/category-icon";
+import { FiltersPanel } from "@/features/records/components/filters-panel";
+import { EmptyState } from "@/components/ui/empty-state";
 import { timelineFiltersSchema } from "@/features/records/schemas";
 import { getTimeline, getTimelineFilterOptions, type TimelineItem } from "@/server/medical/timeline";
 import { requirePatient } from "@/server/patient/context";
@@ -37,7 +39,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
   return (
     <>
       <PageHeader
-        eyebrow="Paciente"
+       
         title="Historial"
         description="Tu historia médica en orden cronológico."
         action={
@@ -47,7 +49,8 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
         }
       />
 
-      <form className="mb-6 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]" aria-label="Filtros del historial">
+      <FiltersPanel activeCount={[filters.year, filters.category, filters.specialty, filters.institution].filter(Boolean).length}>
+      <form className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-[repeat(4,minmax(0,1fr))_auto]" aria-label="Filtros del historial">
         <select name="year" defaultValue={filters.year ?? ""} aria-label="Año" className={selectCls}>
           <option value="">Todos los años</option>
           {options.years.map((y) => (
@@ -80,7 +83,7 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
             </option>
           ))}
         </select>
-        <div className="col-span-2 flex gap-2 sm:col-span-4 lg:col-span-1">
+        <div className="flex gap-2 sm:col-span-2 lg:col-span-1">
           <Button type="submit" variant="secondary" className="flex-1 lg:flex-none">
             Filtrar
           </Button>
@@ -91,16 +94,26 @@ export default async function HistoryPage({ searchParams }: { searchParams: Prom
           ) : null}
         </div>
       </form>
+      </FiltersPanel>
 
       {items.length === 0 ? (
-        <Card className="flex flex-col items-center px-6 py-16 text-center">
-          <span className="flex size-12 items-center justify-center rounded-2xl bg-canvas text-muted ring-1 ring-line ring-inset">
-            <CalendarClock className="size-5" />
-          </span>
-          <p className="mt-4 font-medium text-ink">{hasFilters ? "No hay resultados con estos filtros" : "Tu historial está vacío"}</p>
-          <p className="mt-1 max-w-sm text-sm text-muted">
-            {hasFilters ? "Probá con otros filtros." : "Subí un estudio o cargá cirugías, internaciones y vacunas en Mi salud para verlos acá."}
-          </p>
+        <Card>
+          <EmptyState
+            icon={CalendarClock}
+            title={hasFilters ? "No hay resultados con estos filtros" : "Tu historial está vacío"}
+            description={hasFilters ? "Probá con otros filtros o limpialos para ver todo." : "Subí un estudio o cargá cirugías, internaciones y vacunas en Mi salud para verlos acá, ordenados por fecha."}
+            action={
+              hasFilters ? (
+                <ButtonLink href="/patient/history" variant="secondary" size="sm">
+                  Limpiar filtros
+                </ButtonLink>
+              ) : (
+                <ButtonLink href="/patient/documents/new" size="sm">
+                  <Plus className="size-4" /> Subir un estudio
+                </ButtonLink>
+              )
+            }
+          />
         </Card>
       ) : (
         <div className="space-y-10">
